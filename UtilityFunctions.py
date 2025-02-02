@@ -200,6 +200,11 @@ def remove_duplicate_in_directory(directory):
     print(f"Processed all files in directory: {directory}")
     print("-remove_duplicate_in_directory")
 
+#remove invalid characters from file name
+def CleanFilename(filename):
+    #TBD
+    return str(filename).replace('/',' ')
+
 if __name__ == "__main__":
     directory_path = "/Users/guyjasper/Desktop/Don & Irish/JPG_8X12" 
     remove_duplicate_in_directory(directory_path)
