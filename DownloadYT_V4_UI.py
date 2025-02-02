@@ -1,25 +1,68 @@
-
 import tkinter as tk
 from tkinter import scrolledtext
 from tkinter import filedialog  # For folder selection dialog
 
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
-import os
-import time
-import subprocess
-import threading, queue
+import os, subprocess, threading, queue
+import json  # For parsing JSON
 from UtilityFunctions import *
-
-basse_url = 'https://www.youtube.com/watch?v='
-video_id = 'HNy41EFCJcs'
 
 RAW_FOLDER = "DOWNLOADS/"
 MERGED_FOLDER = "NEW_SONGS/"
 
 # need to use youtube-po-token-generator to generate poToken and visitorData
+js_url =  '/Users/guyjasper/Documents/Guy/Projects/Python/youtube-po-token-generator/examples/one-shot.js'
 VISITOR_DATA = 'CgtKbVR3aVJQUTUxcyic5fy8BjIKCgJQSBIEGgAgbg%3D%3D'
 PO_TOKEN = 'MnRH5JFMhu5OqUfcnrah0Bf_GmXlDOP08QPu9RFMLSJtZQRocmea4VGzTCEgMfoGXur3S_IdichbZKmYiEUtWqG5wY4dj29DAypotNrsSry0NvUr8Zk16KWsr1ulG2oXvCRJ_8JsERbT3FzT2DaT1ONpPvVopA=='
+
+def get_po_token_thread():
+    message_queue.put('+get_po_token')
+    
+    message_queue.put('+subprocess')
+    result = subprocess.run(
+            ["node", js_url],  # Ensure Node.js is installed and accessible
+            capture_output=True,
+            text=True
+        )
+    message_queue.put('-subprocess')
+    if result.returncode != 0:
+        message_queue.put(f"Error running JavaScript: {result.stderr}")
+    else:
+        data = result.stdout.strip()
+        # message_queue.put(f'data: {data}')
+
+        result_data = json.loads(data)  # Parse the JSON output
+
+        visitorData = result_data.get("visitorData")
+        if visitorData:
+            message_queue.put(f'visitorData: {visitorData}')
+            VISITOR_DATA = visitorData
+        else:
+            message_queue.put('visitorData not found!')
+            
+        po_token = result_data.get("poToken")  # Get the poToken value
+        if po_token:
+            message_queue.put(f'poToken: {po_token}')
+            PO_TOKEN = po_token
+        else:
+            message_queue.put('poToken not found!')
+
+    message_queue.put('-get_po_token()')
+    is_downloading = False    
+
+def get_po_token():
+    # Set the downloading flag
+    global is_downloading
+    
+    is_downloading = True
+    
+    # Run the download in a separate thread
+    threading.Thread(target=get_po_token_thread, daemon=True).start()
+            
+    # Start processing the queue
+    process_queue()
+
 
 video_filename = ""
 audio_filename = ""
@@ -95,8 +138,14 @@ def process_queue():
             #     insertLog(message)
             
             # enable button if done
-            if message == '-thread_download_video':
-                download_button.config(state=tk.NORMAL)            
+            if message == '-thread_download_video' or message == '-get_po_token()':
+                download_button.config(state=tk.NORMAL)
+                if message == '-get_po_token()':
+                    txt_poToken.delete(0, tk.END)
+                    txt_poToken.insert(tk.END, PO_TOKEN)
+                    txt_visitor.delete(0, tk.END)
+                    txt_visitor.insert(tk.END, VISITOR_DATA)
+                    
     except queue.Empty:
         pass
 
@@ -232,13 +281,6 @@ def start_download():
         download_button.config(state=tk.DISABLED)
     else:
         insertLog('Please enter YT url to download.')        
-
-
-# def insertLog(log):
-#     txtLogs.configure(state=tk.NORMAL)
-#     txtLogs.insert(tk.END,f"{log}\n")
-#     txtLogs.see(tk.END) # Auto-scroll to the bottom
-#     txtLogs.configure(state=tk.DISABLED)
     
 def insertLog(log):
     txtLogs.configure(state=tk.NORMAL)  # Enable editing
@@ -413,6 +455,11 @@ btnListFiles.grid(row=0, column=1)
 btn_clear_logs = tk.Button(frame_btn, text="Clear Logs", command=clearLogs)
 btn_clear_logs.grid(row=0, column=2)
 # btn_clear_logs.pack(side=tk.TOP, anchor=tk.CENTER)  # Center the button
+
+# Schedule the initialization function to run after the GUI starts
+insertLog('Getting poToken...')
+download_button.config(state=tk.DISABLED)
+root.after(0, get_po_token)
 
 # Run the application
 root.mainloop()
