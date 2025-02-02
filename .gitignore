@@ -1,0 +1,9 @@
+/node_modules
+/build
+/dist
+/DOWNLOADS
+/NEW_SONGS
+/__pycache__
+
+
+/.venv
