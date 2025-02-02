@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import tkinter as tk
 from tkinter import scrolledtext
 from tkinter import filedialog  # For folder selection dialog
@@ -12,7 +14,7 @@ RAW_FOLDER = "DOWNLOADS/"
 MERGED_FOLDER = "NEW_SONGS/"
 
 # need to use youtube-po-token-generator to generate poToken and visitorData
-js_url =  '/Users/guyjasper/Documents/Guy/Projects/Python/youtube-po-token-generator/examples/one-shot.js'
+js_url =  './youtube-po-token-generator/examples/one-shot.js'
 VISITOR_DATA = 'CgtKbVR3aVJQUTUxcyic5fy8BjIKCgJQSBIEGgAgbg%3D%3D'
 PO_TOKEN = 'MnRH5JFMhu5OqUfcnrah0Bf_GmXlDOP08QPu9RFMLSJtZQRocmea4VGzTCEgMfoGXur3S_IdichbZKmYiEUtWqG5wY4dj29DAypotNrsSry0NvUr8Zk16KWsr1ulG2oXvCRJ_8JsERbT3FzT2DaT1ONpPvVopA=='
 
@@ -384,10 +386,14 @@ def list_files_in_directory():
         # List all files in the directory
         files = [f for f in os.listdir(MERGED_FOLDER) if os.path.isfile(os.path.join(MERGED_FOLDER, f))]
         
+        
         if not files:  # If no files are found            
             insertLog("No files found in the selected folder.\n")
         else:
-            for file in files:
+            # Sort files by name (alphabetically)
+            sorted_files = sorted(files)
+            
+            for file in sorted_files:
                 if not file.startswith('.'):
                     insertLog(file)
         insertLog('------------------\nEnd')            
