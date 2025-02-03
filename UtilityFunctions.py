@@ -88,8 +88,8 @@ directory_path = "/Users/guyjasper/Documents/Guy/Projects/Python/HelloWorld/NEW_
 # List of keywords to remove from filenames
 keywords_to_remove = [
     "_with_audio",
-    " | Karaoke Version | KaraFun",
-    " | Karaoke Version",
+    " | karaoke version | karafun",
+    " | karaoke version",
     " KARAOKE VERSION",
     " (KARAOKE)",
     "[KARAOKE] ",
@@ -106,8 +106,8 @@ keywords_to_remove = [
     "in the style of ",
     " (KARAOKE HD)",
     " - from Zoom Karaoke",
-    " (KARAOKE Version)",
-    " (KARAOKE PIANO VERSION)"
+    " (KARAOKE PIANO VERSION)",
+    "(Karaoke Acoustic Instrumental)"
     ]
 
 # if __name__ == "__main__":
@@ -122,13 +122,14 @@ def remove_keywords(filename, keywords=None):
 
     for keyword in keywordtoremove:
         # Create a regex pattern that is case-insensitive
-        pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-        new_name = pattern.sub("", new_name)
+        # pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+        pattern = r"\b" + re.escape(keyword) + r"\b"
+        # new_name = pattern.sub("", new_name)
+        new_name = re.sub(pattern, "", new_name, flags=re.IGNORECASE).strip()
 
     # Strip leading/trailing whitespace and construct the new full path
     new_name = new_name.strip()
-
-    return new_name
+    return " ".join(new_name.split())
 
 def fix_filenames_in_directory(directory):
     """

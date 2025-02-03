@@ -7,18 +7,23 @@ from tkinter import filedialog  # For folder selection dialog
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
 from UtilityFunctions import *
+# import simpleaudio as sa
 import os, subprocess, threading, queue
 import json  # For parsing JSON
+import sys
 
 RAW_FOLDER = "DOWNLOADS/"
 MERGED_FOLDER = "NEW_SONGS/"
 
-SOUND_NOTIF = 'arpearpeggio-467.mp3'
+SOUND_NOTIF = './Sounds/arpeggio-467.mp3'
+SOUND_ERROR = './Sounds/glitch-notification.mp3'
 
 # need to use youtube-po-token-generator to generate poToken and visitorData
 js_url =  './youtube-po-token-generator/examples/one-shot.js'
 VISITOR_DATA = 'CgtKbVR3aVJQUTUxcyic5fy8BjIKCgJQSBIEGgAgbg%3D%3D'
 PO_TOKEN = 'MnRH5JFMhu5OqUfcnrah0Bf_GmXlDOP08QPu9RFMLSJtZQRocmea4VGzTCEgMfoGXur3S_IdichbZKmYiEUtWqG5wY4dj29DAypotNrsSry0NvUr8Zk16KWsr1ulG2oXvCRJ_8JsERbT3FzT2DaT1ONpPvVopA=='
+
+
 
 def get_po_token_thread():
     message_queue.put('+get_po_token')
@@ -66,7 +71,6 @@ def get_po_token():
             
     # Start processing the queue
     process_queue()
-
 
 video_filename = ""
 audio_filename = ""
@@ -117,6 +121,30 @@ def Downloadfiles(videostream, audiostream):
     except Exception as e:
         message_queue.put(f"ERROR: An error occurred downloading files. [{e}]")
         return False
+
+def play_sound_threaded(file_path):
+    if not os.path.exists(file_path):
+        insertLog(f"play_sound Error: File '{file_path}' not found.")
+        return
+
+    try:
+        if sys.platform == "darwin":  # macOS
+            subprocess.run(["afplay", file_path], check=True)
+        elif sys.platform == "win32":  # Windows
+            import winsound
+            winsound.PlaySound(file_path, winsound.SND_FILENAME)
+        elif sys.platform.startswith("linux"):  # Linux
+            subprocess.run(["aplay", file_path], check=True)
+        else:
+            insertLog("play_sound: Unsupported operating system.")
+    except Exception as e:
+        insertLog(f"Error playing sound: {e}")    
+    # os.system("afplay ./arpeggio-467.mp3")
+    
+# Function to play sound in a separate thread
+def play_sound(file_path):
+    threading.Thread(target=play_sound_threaded, args=(file_path,), daemon=True).start()
+    
     
 # Queue for thread-safe communication
 message_queue = queue.Queue()
@@ -169,7 +197,8 @@ def start_download_thread(url):
             message_queue.put("contacting server...\n")
             
             # modified YouTube class to use po_token paramater            
-            yt = YouTube(url,'WEB', po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress )
+            # yt = YouTube(url,'WEB', po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress )
+            yt = YouTube(url,use_po_token=True,po_token=PO_TOKEN, on_progress_callback=on_progress )
         except Exception as e:
             message_queue.put(f"ERROR: An error occurred: {e}")
             return
@@ -254,9 +283,11 @@ def start_download_thread(url):
             # If successful, delete the original video and audio files (optional)
             os.remove(f"{RAW_FOLDER}{video_filename}")
             os.remove(f"{RAW_FOLDER}{audio_filename}")            
-            message_queue.put('Video successfully downloaded.')            
+            message_queue.put('Video successfully downloaded.')
+            play_sound(SOUND_NOTIF)     
     except Exception as e:
         message_queue.put(f"Error: {str(e)}")
+        play_sound(SOUND_ERROR)
     finally:
         # Reset the downloading flag
         message_queue.put('-thread_download_video')
@@ -398,9 +429,13 @@ def list_files_in_directory():
             for file in sorted_files:
                 if not file.startswith('.'):
                     insertLog(file)
-        insertLog('------------------\nEnd')
+        insertLog('------------------\nEnd')        
+
     except Exception as e:
         insertLog(f'Error: {e}')
+
+sound_file = f"{os.path.dirname(os.path.abspath(__file__))}/arpeggio-467.wav"
+
 
 # **********************************
 # Create the main application window
