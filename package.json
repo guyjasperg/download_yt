@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "jsdom": "^26.0.0",
+    "play-sound": "^1.1.6",
     "youtube-po-token-generator": "^0.4.0"
   }
 }

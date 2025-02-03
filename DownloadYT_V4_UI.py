@@ -6,12 +6,14 @@ from tkinter import filedialog  # For folder selection dialog
 
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
+from UtilityFunctions import *
 import os, subprocess, threading, queue
 import json  # For parsing JSON
-from UtilityFunctions import *
 
 RAW_FOLDER = "DOWNLOADS/"
 MERGED_FOLDER = "NEW_SONGS/"
+
+SOUND_NOTIF = 'arpearpeggio-467.mp3'
 
 # need to use youtube-po-token-generator to generate poToken and visitorData
 js_url =  './youtube-po-token-generator/examples/one-shot.js'
@@ -155,7 +157,7 @@ def process_queue():
     if is_downloading:
         root.after(50, process_queue)  # Check the queue again after 100ms
         
-def thread_download_video(url):
+def start_download_thread(url):
     global video_filename
     global audio_filename
     global yt
@@ -167,7 +169,7 @@ def thread_download_video(url):
             message_queue.put("contacting server...\n")
             
             # modified YouTube class to use po_token paramater            
-            yt = YouTube(url,use_po_token=True, po_token=PO_TOKEN, on_progress_callback=on_progress )
+            yt = YouTube(url,'WEB', po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress )
         except Exception as e:
             message_queue.put(f"ERROR: An error occurred: {e}")
             return
@@ -274,7 +276,7 @@ def start_download():
         is_downloading = True
         
         # Run the download in a separate thread
-        threading.Thread(target=thread_download_video, args=(url,), daemon=True).start()
+        threading.Thread(target=start_download_thread, args=(url,), daemon=True).start()
                 
         # Start processing the queue
         process_queue()
@@ -396,7 +398,7 @@ def list_files_in_directory():
             for file in sorted_files:
                 if not file.startswith('.'):
                     insertLog(file)
-        insertLog('------------------\nEnd')            
+        insertLog('------------------\nEnd')
     except Exception as e:
         insertLog(f'Error: {e}')
 
