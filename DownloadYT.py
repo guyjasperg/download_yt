@@ -23,8 +23,6 @@ js_url =  './youtube-po-token-generator/examples/one-shot.js'
 VISITOR_DATA = 'CgtKbVR3aVJQUTUxcyic5fy8BjIKCgJQSBIEGgAgbg%3D%3D'
 PO_TOKEN = 'MnRH5JFMhu5OqUfcnrah0Bf_GmXlDOP08QPu9RFMLSJtZQRocmea4VGzTCEgMfoGXur3S_IdichbZKmYiEUtWqG5wY4dj29DAypotNrsSry0NvUr8Zk16KWsr1ulG2oXvCRJ_8JsERbT3FzT2DaT1ONpPvVopA=='
 
-
-
 def get_po_token_thread():
     message_queue.put('+get_po_token')
     
@@ -199,6 +197,8 @@ def start_download_thread(url):
             # modified YouTube class to use po_token paramater            
             # yt = YouTube(url,'WEB', po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress )
             yt = YouTube(url,use_po_token=True,po_token=PO_TOKEN, on_progress_callback=on_progress )
+            # yt = YouTube(url,'WEB', on_progress_callback=on_progress )
+            # yt = YouTube(url,'WEB', po_token=PO_TOKEN, on_progress_callback=on_progress )
         except Exception as e:
             message_queue.put(f"ERROR: An error occurred: {e}")
             return
@@ -261,7 +261,7 @@ def start_download_thread(url):
             message_queue.put("\nMerging audio and video streams...")
 
             # Combine video and audio using ffmpegexit            
-            output_file = f"{MERGED_FOLDER}{video_filename}"
+            output_file = f"{MERGED_FOLDER}{to_title_case(video_filename)}"
             message_queue.put(f"saving file to ->{output_file}")
 
             if os.path.isfile(output_file):

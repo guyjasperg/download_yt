@@ -201,6 +201,44 @@ def remove_duplicate_in_directory(directory):
     print(f"Processed all files in directory: {directory}")
     print("-remove_duplicate_in_directory")
 
+def to_title_case(str):
+  """
+  Converts a string to title case with proper handling of keywords.
+
+  Args:
+      str: The input string.
+
+  Returns:
+      The string in title case.
+  """
+  keywords = [
+      "and",
+      "of",
+      "the",
+      "a",
+      "to",
+      "in",
+      "is",
+      "it",
+      "for",
+      "ni",
+      "at",
+      "na",
+  ]
+
+  try:
+      words = str.lower().split() 
+      title_case_words = [
+          word if (keywords.count(word) > 0 and i > 0 and prev_word != "-") 
+          else word.capitalize() 
+          for i, (word, prev_word) in enumerate(zip(words, [" "] + words))
+      ]
+      return " ".join(title_case_words)
+
+  except Exception as e:
+      print(f"to_title_case: ERROR {e}")
+      return str
+
 #remove invalid characters from file name
 def CleanFilename(filename):
     #TBD
