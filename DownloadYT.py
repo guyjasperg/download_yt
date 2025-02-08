@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 
 import tkinter as tk
-from tkinter import ttk
 from tkinter import scrolledtext
 from tkinter import filedialog  # For folder selection dialog
-from tkinter import messagebox
 
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
 from UtilityFunctions import *
-import pychrome, html
+# import simpleaudio as sa
 import os, subprocess, threading, queue
 import json  # For parsing JSON
 import sys
@@ -24,24 +22,6 @@ SOUND_ERROR = './Sounds/glitch-notification.mp3'
 js_url =  './youtube-po-token-generator/examples/one-shot.js'
 VISITOR_DATA = 'CgtKbVR3aVJQUTUxcyic5fy8BjIKCgJQSBIEGgAgbg%3D%3D'
 PO_TOKEN = 'MnRH5JFMhu5OqUfcnrah0Bf_GmXlDOP08QPu9RFMLSJtZQRocmea4VGzTCEgMfoGXur3S_IdichbZKmYiEUtWqG5wY4dj29DAypotNrsSry0NvUr8Zk16KWsr1ulG2oXvCRJ_8JsERbT3FzT2DaT1ONpPvVopA=='
-
-# Flag to track if a download is in progress
-is_downloading = False
-video_filename = ""
-audio_filename = ""
-url_title_map = {}  # Dictionary to store URLs (key) and titles (value)
-yt = None
-
-# Queue for thread-safe communication
-message_queue = queue.Queue()
-
-# Init
-# Make sure temp folders exists
-if not os.path.isdir(RAW_FOLDER):
-    os.mkdir(RAW_FOLDER)
-    
-if not os.path.isdir(MERGED_FOLDER):
-    os.mkdir(MERGED_FOLDER)
 
 def get_po_token_thread():
     message_queue.put('+get_po_token')
@@ -89,6 +69,11 @@ def get_po_token():
             
     # Start processing the queue
     process_queue()
+
+video_filename = ""
+audio_filename = ""
+
+yt = None
 
 def on_progress(stream, chunk, bytes_remaining):
   """
@@ -158,6 +143,14 @@ def play_sound_threaded(file_path):
 def play_sound(file_path):
     threading.Thread(target=play_sound_threaded, args=(file_path,), daemon=True).start()
     
+    
+# Queue for thread-safe communication
+message_queue = queue.Queue()
+
+# Flag to track if a download is in progress
+is_downloading = False
+
+# Periodically check the queue and update the UI
 # Periodically check the queue and update the UI
 def process_queue():
     try:
@@ -302,17 +295,9 @@ def start_download_thread(url):
 
 def start_download():
     global is_downloading
-
-    # Find the URL corresponding to the selected title (linear search, could be optimized if needed)
-    selected_title = cboURL.get()
-    for url, title in url_title_map.items():
-        if title == selected_title:
-            selected_url = url
-            break  # Stop searching once found
-    print(f"Selected URL: {selected_url}")        
-    
+        
     # check if there is valid input
-    url = selected_url
+    url = txturl.get()
     if url:
         clearLogs()
         
@@ -401,6 +386,14 @@ def update_last_line(progress):
     # Disable the widget again
     txtLogs.config(state=tk.DISABLED)    
 
+# Init
+# Make sure temp folders exists
+if not os.path.isdir(RAW_FOLDER):
+    os.mkdir(RAW_FOLDER)
+    
+if not os.path.isdir(MERGED_FOLDER):
+    os.mkdir(MERGED_FOLDER)
+
 def test_function():
     # Some initial code
     insertLog("Starting function...")
@@ -441,135 +434,8 @@ def list_files_in_directory():
     except Exception as e:
         insertLog(f'Error: {e}')
 
-def populate_combobox():
-    global url_title_map  # Access the global tab data
-    
-    titles = list(url_title_map.values()) 
-    cboURL['values'] = titles  # Set the combobox values (titles)
-    
-    if titles:
-        cboURL.bind("<<ComboboxSelected>>", on_select)  # Bind the selection event
-        cboURL.config(state="readonly")
-        cboURL.current(0)
-        on_select(None)
-    else:
-        cboURL.config(state="normal")
-    
-    # if cboURL["values"]: # selects the first item if available
-    #     cboURL.current(0)
-    #     on_select(None)
+sound_file = f"{os.path.dirname(os.path.abspath(__file__))}/arpeggio-467.wav"
 
-def on_select(event):
-    """Handles Combobox selection and opens URL."""
-    global tab_data
-    selected_title = cboURL.get()
-    print(f"SelectedItem: {selected_title}")
-
-def get_selected():
-    selected_title = cboURL.get()
-    print(f"SelectedItem: {selected_title}")
-
-####################################
-# pychrome related functions
-####################################
-url_title_map = {}  # Declare the global dictionary
-
-def check_and_run_chrome():
-    if not check_chrome_running():
-        response = messagebox.askyesno("Chrome with Debugging", "Do you want to run Chrome with debugging?")
-        if response:  # True if Yes, False if No
-            launch_chrome_with_debugging()
-        else:
-            print("User clicked No")
-    else:
-        # Get opened tabs
-        browser = pychrome.Browser()
-
-        try:
-            tabs = browser.list_tab()
-            global url_title_map  # Dictionary to store URLs (key) and titles (value)
-            url_title_map.clear()
-
-            for tab in tabs:
-                if tab._kwargs.get('type') == 'page':
-                    # Access tab information
-                    url = tab._kwargs.get('url')
-                    if url and "youtube.com/watch?" in url:
-                        title = tab._kwargs.get('title')
-                        print(title)
-                        url_title_map[url] = html.unescape(title)  # URL is the key now
-            
-            if url_title_map:
-                populate_combobox()
-
-        except Exception as e:
-            message = str(e)
-            if message.find('Failed to establish a new connection')>=0:
-                print("Chrome with debugging not running")
-            else:
-                print(f"An error occurred: {e}")
-
-def check_chrome_running():
-    """Checks if a Chrome instance with remote debugging is running."""
-    bChromeRunning = False
-    try:
-        browser = pychrome.Browser()  # Try connecting; if it fails, Chrome isn't running or debugging is off
-        browser.list_tab() # close the browser.
-        bChromeRunning = True  # Chrome with debugging is running
-    except Exception as e:
-        print('ERROR: check_chrome_running() ', e)
-
-    print('Chrome Running:', bChromeRunning)
-    return bChromeRunning
-
-def launch_chrome_with_debugging(port=9222):
-    """Launches Chrome with remote debugging enabled."""
-    chrome_executable = None
-
-    # Find Chrome executable (platform-specific)
-    if os.name == 'nt':  # Windows
-        chrome_paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            # Add more potential paths if needed
-        ]
-        for path in chrome_paths:
-            if os.path.exists(path):
-                chrome_executable = path
-                break
-    elif os.name == 'posix':  # macOS/Linux
-        chrome_paths = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",  # macOS
-            "/usr/bin/google-chrome",  # Common Linux path
-            "/usr/bin/chromium-browser", # Common Linux path
-            # Add more potential paths if needed
-        ]
-        for path in chrome_paths:
-            if os.path.exists(path):
-                chrome_executable = path
-                break
-
-    if not chrome_executable:
-        raise Exception("Chrome executable not found. Please specify the path.")
-
-    try:
-        subprocess.Popen([
-            chrome_executable,
-            "--remote-debugging-port=" + str(port),
-            "--user-data-dir=./chrome_profile", # Use a specific profile to avoid conflicts
-            "--no-first-run", # prevent first run screen
-            "--disable-extensions", # prevent extensions from interfering
-        ])
-
-        # Give Chrome a little time to start
-        time.sleep(2)  # Adjust if needed
-
-        return True
-
-    except FileNotFoundError:
-        raise Exception(f"Chrome executable not found at: {chrome_executable}")
-    except Exception as e:
-        raise Exception(f"Error launching Chrome: {e}")
 
 # **********************************
 # Create the main application window
@@ -581,93 +447,62 @@ root.configure(bg="#FFFFFF")
 
 frame_poToken = tk.Frame()
 frame_poToken.configure(bg="#FFFFFF")
-frame_poToken.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=10)  # Use grid!
-root.grid_columnconfigure(1, weight=1) # Make column 1 expand horizontally
+frame_poToken.pack(padx=10, pady=10)
 
 # add visitor, poToken
 lbl_visitor = tk.Label(frame_poToken, text="visitor")
-lbl_visitor.grid(row=0,column=0, sticky=tk.W)
+lbl_visitor.grid(row=0,column=0)
 
 txt_visitor = tk.Entry(frame_poToken, width=55)
 txt_visitor.grid(row=0,column=1, columnspan=3)
 
 lbl_poToken = tk.Label(frame_poToken, text="poToken")
-lbl_poToken.grid(row=1,column=0, sticky=tk.W)
+lbl_poToken.grid(row=1,column=0)
 
 txt_poToken = tk.Entry(frame_poToken, width=55)
 txt_poToken.grid(row=1,column=1, columnspan=3)
 
 frame = tk.Frame()
 frame.configure(bg="#FFFFFF")
-frame.grid(row=1, column=0, padx=5, pady=10, sticky=tk.NSEW)  # Use grid, sticky for resizing
-
-root.grid_rowconfigure(1, weight=1)  # Make row 1 (the frame) expand vertically
-root.grid_columnconfigure(0, weight=1) # Make column 0 expand horizontally
+frame.pack(padx=5, pady=10)
 
 # Label and Entry for the YouTube URL
-url_label = tk.Label(frame, text="YouTube Vid")
-url_label.grid(row=0, column=0, padx=2, pady=5, sticky=tk.W)
+url_label = tk.Label(frame, text="YouTube URL:")
+url_label.grid(row=0, column=0, padx=2, pady=5)
 
-# txturl = tk.Entry(frame, width=50)
-# txturl.grid(row=0, column=1, padx=2, pady=5)
-cboURL = ttk.Combobox(frame)
-cboURL.grid(row=0, column=1, padx=2, pady=5, sticky=tk.EW) # Sticky East-West
-
-# New Button (before download_button)
-btnRefreshTabs = tk.Button(frame, text="..", command=check_and_run_chrome)  
-btnRefreshTabs.grid(row=0, column=2, padx=2, pady=5)  # Place before Download
+txturl = tk.Entry(frame, width=50)
+txturl.grid(row=0, column=1, padx=2, pady=5)
 
 # Button to start the download
 download_button = tk.Button(frame, text="Download", command=start_download)
-download_button.grid(row=0, column=3, padx=2, pady=5)
-
-frame.grid_rowconfigure(1, weight=1)  # Make row 1 (txtLogs) expand vertically
-# frame.grid_columnconfigure(0, weight=1)  # Make column 0 expand horizontally
-frame.grid_columnconfigure(1, weight=1)  # Make column 1 expand horizontally
-# frame.grid_columnconfigure(2, weight=1)  # Make column 2 expand horizontally
+download_button.grid(row=0, column=2, padx=2, pady=5)
 
 # Multiline Textbox for progress updates
-txtLogs = scrolledtext.ScrolledText(frame, wrap=tk.WORD)
-txtLogs.grid(row=1, column=0, columnspan=4, pady=5, sticky=tk.NSEW)
+
+txtLogs = scrolledtext.ScrolledText(frame, wrap=tk.WORD, height=20)
+txtLogs.grid(row=1, column=0, columnspan=3, pady=5)
 txtLogs.configure(state=tk.DISABLED)
 
 # Frame for buttons below the logs
 frame_btn = tk.Frame(root, bg="#FFFFFF")
-frame_btn.grid(row=2, column=0, sticky=tk.EW, pady=10) # Grid it!
-root.grid_rowconfigure(2, weight=0) # Row 2 should not resize
+frame_btn.pack(pady=(5, 10))  # Add padding: 10px top, 20px bottom
 
 # Add empty columns on both sides to center the buttons
 frame_btn.grid_columnconfigure(0, weight=1)  # Empty column on the left
 frame_btn.grid_columnconfigure(3, weight=1)  # Empty column on the right
 
 btnListFiles = tk.Button(frame_btn, text="Downloaded Files", command=list_files_in_directory)
-btnListFiles.grid(row=0, column=1, sticky=tk.S)
+btnListFiles.grid(row=0, column=1)
 # btnListFiles.pack(side=tk.TOP, anchor=tk.CENTER)  # Center the button
 
 btn_clear_logs = tk.Button(frame_btn, text="Clear Logs", command=clearLogs)
-btn_clear_logs.grid(row=0, column=2, sticky=tk.S)
+btn_clear_logs.grid(row=0, column=2)
 # btn_clear_logs.pack(side=tk.TOP, anchor=tk.CENTER)  # Center the button
 
 # Schedule the initialization function to run after the GUI starts
 insertLog('Getting poToken...')
 download_button.config(state=tk.DISABLED)
 root.after(0, get_po_token)
-
-root.resizable(width=False, height=False)  # Disable resizing in both directions
-
-def set_background(widget, color, widget_types=(tk.Label, tk.Entry, tk.Button, ttk.Combobox)): # Add Combobox
-    if isinstance(widget, widget_types):
-        try:
-            widget.config(bg=color)  # Try 'bg' first
-        except tk.TclError:
-            try:
-                widget.config(background=color)  # Try 'background' if 'bg' fails
-            except tk.TclError:
-                pass  # Ignore if neither works (some widgets might not have bg options)
-    for child in widget.winfo_children():
-        set_background(child, color, widget_types)
-
-set_background(root, "White")
 
 # Run the application
 root.mainloop()
