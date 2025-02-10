@@ -88,43 +88,53 @@ directory_path = "/Users/guyjasper/Documents/Guy/Projects/Python/HelloWorld/NEW_
 # List of keywords to remove from filenames
 keywords_to_remove = [
     "_with_audio",
-    " | karaoke version | karafun",
-    " | karaoke version",
-    " KARAOKE VERSION",
-    " (KARAOKE)",
+    "| karaoke version | karafun",
+    "| karaoke version",
+    "KARAOKE VERSION",
+    "(KARAOKE)",
     "[KARAOKE] ",
-    " [KARAOKE]",
+    "[KARAOKE]",
     "- as popularized by",
     "🎤🎵",
-    " (Karaoke Version)",
-    " ( Karaoke Version )",
-    " (Karaoke  Lower Key)",
-    " (Karaoke With Lyrics)",
-    " (Hd Karaoke)",
-    " (Karaoke Studio Version)",
+    "(Karaoke Version)",
+    "( Karaoke Version )",
+    "(Karaoke  Lower Key)",
+    "(Karaoke With Lyrics)",
+    "(Hd Karaoke)",
+    "(Karaoke Studio Version)",
     "Karaoke version in the style of ",
     "in the style of ",
-    " (KARAOKE HD)",
-    " - from Zoom Karaoke",
-    " (KARAOKE PIANO VERSION)",
-    "(Karaoke Acoustic Instrumental)"
+    "(KARAOKE HD)",
+    "- from Zoom Karaoke",
+    "(KARAOKE PIANO VERSION)",
+    "(Karaoke Acoustic Instrumental)",
+    "(karaoke Version)",
+    "(hd Karaoke)",
+    "(karaoke) Hd",
+    "| Karaoke",
+    "[karaoke Version]",
+    "(karaoke Instrumental)"
     ]
 
 # if __name__ == "__main__":
 #     batch_remove_keywords_case_insensitive(directory_path, keywords_to_remove)
 
 def remove_keywords(filename, keywords=None):
+    global keywords_to_remove
+    
     if keywords is None:
         keywords = []
 
     new_name = filename
-    keywordtoremove = keywords_to_remove if keywords == "" else keywords
+    keywordtoremove = keywords_to_remove if keywords == [] else keywords
 
     for keyword in keywordtoremove:
         # Create a regex pattern that is case-insensitive
-        # pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-        pattern = r"\b" + re.escape(keyword) + r"\b"
-        # new_name = pattern.sub("", new_name)
+        if "(" in keyword and ")" in keyword:
+            pattern = r"\(" + re.escape(keyword[1:-1]) + r"\)" 
+        else:
+            pattern = r"\b" + re.escape(keyword) + r"\b" 
+ 
         new_name = re.sub(pattern, "", new_name, flags=re.IGNORECASE).strip()
 
     # Strip leading/trailing whitespace and construct the new full path
@@ -156,14 +166,16 @@ def fix_filenames_in_directory(directory):
 
         # Separate the filename and the extension
         name, ext = os.path.splitext(filename)
+        print(name)
         
         # Capitalize the start of each word in the main filename
-        new_name = name.title()
+        new_name = to_title_case(remove_keywords(name))
+        print(new_name)
         
-        # Construct the new full path
+        # # Construct the new full path
         new_full_path = os.path.join(directory, f"{new_name}{ext}")
 
-        # Rename the file
+        # # Rename the file
         os.rename(full_path, new_full_path)
 
     print(f"Processed all files in directory: {directory}")
@@ -245,6 +257,7 @@ def CleanFilename(filename):
     return str(filename).replace('/',' ')
 
 if __name__ == "__main__":
-    directory_path = "/Users/guyjasper/Desktop/Don & Irish/JPG_8X12" 
-    remove_duplicate_in_directory(directory_path)
+    # directory_path = "/Users/guyjasper/Desktop/Don & Irish/JPG_8X12" 
+    # remove_duplicate_in_directory(directory_path)
+    fix_filenames_in_directory("/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/NEW_SONGS")
 
