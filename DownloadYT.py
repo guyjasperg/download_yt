@@ -190,7 +190,7 @@ def process_queue():
     if is_downloading:
         root.after(50, process_queue)  # Check the queue again after 100ms
         
-def start_download_thread(url):
+def start_download_thread(url, tab_id):
     global video_filename
     global audio_filename
     global yt
@@ -291,14 +291,19 @@ def start_download_thread(url):
             os.remove(f"{RAW_FOLDER}{video_filename}")
             os.remove(f"{RAW_FOLDER}{audio_filename}")            
             message_queue.put('Video successfully downloaded.')
-            play_sound(SOUND_NOTIF)     
+            play_sound(SOUND_NOTIF)   
+            
+            # close tab
+            message_queue.put(f'closing tab [{tab_id}]')
+            browser = pychrome.Browser()
+            browser.close_tab(tab_id)  
     except Exception as e:
         message_queue.put(f"Error: {str(e)}")
         play_sound(SOUND_ERROR)
     finally:
         # Reset the downloading flag
         message_queue.put('-thread_download_video')
-        is_downloading = False        
+        is_downloading = False                
 
 def start_download():
     global is_downloading
@@ -309,7 +314,8 @@ def start_download():
         if title == selected_title:
             selected_url = url
             break  # Stop searching once found
-    print(f"Selected URL: {selected_url}")        
+    tab_id = selected_title.split('|')[1].strip()
+    print(f"Selected URL: {selected_url}, tab_id: {tab_id}")        
     
     # check if there is valid input
     url = selected_url
@@ -322,7 +328,7 @@ def start_download():
         is_downloading = True
         
         # Run the download in a separate thread
-        threading.Thread(target=start_download_thread, args=(url,), daemon=True).start()
+        threading.Thread(target=start_download_thread, args=(url,tab_id,), daemon=True).start()
                 
         # Start processing the queue
         process_queue()
@@ -484,7 +490,7 @@ def check_and_run_chrome():
     else:
         # Get opened tabs
         browser = pychrome.Browser()
-
+        
         try:
             tabs = browser.list_tab()
             global url_title_map  # Dictionary to store URLs (key) and titles (value)
@@ -495,7 +501,7 @@ def check_and_run_chrome():
                     # Access tab information
                     url = tab._kwargs.get('url')
                     if url and "youtube.com/watch?" in url:
-                        title = tab._kwargs.get('title')
+                        title = f'{tab._kwargs.get('title')} | {tab.id}'
                         print(title)
                         url_title_map[url] = html.unescape(title)  # URL is the key now
             

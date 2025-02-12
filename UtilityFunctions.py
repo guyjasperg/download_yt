@@ -88,12 +88,12 @@ directory_path = "/Users/guyjasper/Documents/Guy/Projects/Python/HelloWorld/NEW_
 # List of keywords to remove from filenames
 keywords_to_remove = [
     "_with_audio",
+    "- From Zoom Karaoke",
     "| karaoke version | karafun",
     "| karaoke version",
-    "KARAOKE VERSION",
     "(KARAOKE)",
-    "[KARAOKE] ",
     "[KARAOKE]",
+    "KARAOKE VERSION",
     "- as popularized by",
     "🎤🎵",
     "(Karaoke Version)",
@@ -113,7 +113,10 @@ keywords_to_remove = [
     "(karaoke) Hd",
     "| Karaoke",
     "[karaoke Version]",
-    "(karaoke Instrumental)"
+    "(karaoke Instrumental)",
+    "- Karaoke Version From Zoom Karaoke",
+    "()",
+    "[]",
     ]
 
 # if __name__ == "__main__":
@@ -259,5 +262,6 @@ def CleanFilename(filename):
 if __name__ == "__main__":
     # directory_path = "/Users/guyjasper/Desktop/Don & Irish/JPG_8X12" 
     # remove_duplicate_in_directory(directory_path)
-    fix_filenames_in_directory("/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/NEW_SONGS")
+    # fix_filenames_in_directory("/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/NEW_SONGS")
+    remove_keywords("Red Hot Chili Peppers - Otherside (without Backing Vocals) - From Zoom Karaoke.mp4")
 
