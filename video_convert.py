@@ -126,17 +126,32 @@ def convert_avi_to_mp4(input_file):
   except subprocess.CalledProcessError as e:
     print(f"Error converting {input_file}: {e}")
 
-# Example usage:
-folder_path = '/Volumes/KINGSTONSSD/_Karaoke'
-avi_file_paths = find_avi_files(folder_path)
+def convert_m4a_to_mp3(input_file, output_file):
+  """
+  Converts an M4A audio file to MP3 format using FFmpeg.
 
-avi_count = len(avi_file_paths)
-print(avi_count)
-ctr = 1
-for file_path in avi_file_paths:
-  print(f"\n{ctr} of {avi_count}")
-  convert_avi_to_mp4(file_path)
-  ctr = ctr + 1 
+  Args:
+    input_file: Path to the input M4A file.
+    output_file: Path to the output MP3 file.
+  """
+  try:
+    command = ["ffmpeg", "-i", input_file, output_file]
+    subprocess.run(command, check=True)
+    print(f"Successfully converted {input_file} to {output_file}")
+  except subprocess.CalledProcessError as e:
+    print(f"Error converting {input_file}: {e}")
+
+# Example usage:
+# folder_path = '/Volumes/KINGSTONSSD/_Karaoke'
+# avi_file_paths = find_avi_files(folder_path)
+
+# avi_count = len(avi_file_paths)
+# print(avi_count)
+# ctr = 1
+# for file_path in avi_file_paths:
+#   print(f"\n{ctr} of {avi_count}")
+#   convert_avi_to_mp4(file_path)
+#   ctr = ctr + 1 
 
 # print(len(avi_file_paths))
 
@@ -145,3 +160,21 @@ for file_path in avi_file_paths:
 
 # db_path = "/Users/guyjasper/Library/Application Support/OpenKJ/OpenKJ/openkj.sqlite"  # Replace with the actual path to your database file
 # update_db_for_avi(db_path)
+
+video_file = '/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/DOWNLOADS/The Hunchback of Notre Dame (1996) Quasimodo\'s Song.mp4'
+output_file = '/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/DOWNLOADS/The Hunchback of Notre Dame (1996) Quasimodo\'s Song_2.mp4'
+m4a_file = '/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/DOWNLOADS/The Hunchback of Notre Dame (1996) Quasimodo\'s Song.m4a'
+mp3_file = '/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/DOWNLOADS/The Hunchback of Notre Dame (1996) Quasimodo\'s Song.mp3'
+# convert_m4a_to_mp3(m4a_file,mp3_file)
+
+command = [
+    'ffmpeg',
+    '-i', f"{video_file}",
+    '-i', f"{mp3_file}",
+    '-loglevel', 'warning',
+    '-c:v', 'copy',  # Copy video codec (no re-encoding)
+    '-c:a', 'aac',   # Use AAC codec for audio
+    '-strict', 'experimental',  # To ensure ffmpeg accepts the audio format
+    output_file
+]
+subprocess.run(command, check=True)
