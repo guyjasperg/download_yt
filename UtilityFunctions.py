@@ -81,42 +81,38 @@ def batch_remove_keywords_case_insensitive(directory, keywords):
 
     print(f"Processed all files in directory: {directory}")
 
-# Example usage:
-# Replace with the path to your directory
-directory_path = "/Users/guyjasper/Documents/Guy/Projects/Python/HelloWorld/NEW_SONGS" 
-
 # List of keywords to remove from filenames
 keywords_to_remove = [
+    "|",
+    "[",
+    "]",
+    "(",
+    ")",
+    "_",
+    "Karaoke Version From Zoom Karaoke",
     "_with_audio",
-    "- From Zoom Karaoke",
-    "| karaoke version | karafun",
-    "| karaoke version",
-    "(KARAOKE)",
-    "[KARAOKE]",
-    "KARAOKE VERSION",
-    "- as popularized by",
+    "karaoke version",
+    "from zoom karaoke",
+    "karaoke Instrumental",
+    "without backing vocals",
+    "full band karaoke",
+    "stripped",
+    "karaoke hd",
+    "karafun",
+    "karaoke",
+    "as popularized by",
     "🎤🎵",
-    "(Karaoke Version)",
-    "( Karaoke Version )",
-    "(Karaoke  Lower Key)",
-    "(Karaoke With Lyrics)",
-    "(Hd Karaoke)",
-    "(Karaoke Studio Version)",
-    "Karaoke version in the style of ",
+    "lower key",
+    "with lyrics",
+    "hd karaoke",
+    "studio version",
+    "version in the style of",
     "in the style of ",
-    "(KARAOKE HD)",
-    "- from Zoom Karaoke",
-    "(KARAOKE PIANO VERSION)",
-    "(Karaoke Acoustic Instrumental)",
-    "(karaoke Version)",
-    "(hd Karaoke)",
-    "(karaoke) Hd",
-    "| Karaoke",
-    "[karaoke Version]",
-    "(karaoke Instrumental)",
-    "- Karaoke Version From Zoom Karaoke",
+    "piano version",
+    "acoustic instrumental",
     "()",
     "[]",
+    "  ",
     ]
 
 # if __name__ == "__main__":
@@ -259,9 +255,30 @@ def CleanFilename(filename):
     #TBD
     return str(filename).replace('/',' ')
 
+def replace_double_spaces(input_string):
+    """
+    Replaces all occurrences of double spaces with a single space in the input string.
+
+    Args:
+        input_string (str): The input string.
+
+    Returns:
+        str: The modified string with double spaces replaced by single spaces.
+    """
+    # return input_string.replace("  ", " ")
+    return ' '.join(input_string.split())
+    # Example usage:
+    # example_string = "This  is  an  example  string  with  double      spaces."
+    # result = replace_double_spaces(example_string)
+    # print(result)  # Output: "This is an example string with double spaces."
+
+# Replace with the path to your directory
+directory_path = "/Users/guyjasper/Documents/Guy/Projects/Python/HelloWorld/NEW_SONGS" 
+    
 if __name__ == "__main__":
     # directory_path = "/Users/guyjasper/Desktop/Don & Irish/JPG_8X12" 
     # remove_duplicate_in_directory(directory_path)
     # fix_filenames_in_directory("/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/NEW_SONGS")
-    remove_keywords("Red Hot Chili Peppers - Otherside (without Backing Vocals) - From Zoom Karaoke.mp4")
+    # temp = remove_keywords("Ilysb (stripped) - Male Key - Full Band Karaoke - Instrumental -  Lany.mp4")
+    # print(to_title_case(replace_double_spaces(temp)))
 

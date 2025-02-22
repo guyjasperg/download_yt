@@ -294,9 +294,10 @@ def start_download_thread(url, tab_id):
             play_sound(SOUND_NOTIF)   
             
             # close tab
-            message_queue.put(f'closing tab [{tab_id}]')
-            browser = pychrome.Browser()
-            browser.close_tab(tab_id)  
+            if tab_id != "" :
+                message_queue.put(f'closing tab [{tab_id}]')
+                browser = pychrome.Browser()
+                browser.close_tab(tab_id)  
     except Exception as e:
         message_queue.put(f"Error: {str(e)}")
         play_sound(SOUND_ERROR)
@@ -310,11 +311,14 @@ def start_download():
 
     # Find the URL corresponding to the selected title (linear search, could be optimized if needed)
     selected_title = cboURL.get()
-    for url, title in url_title_map.items():
-        if title == selected_title:
-            selected_url = url
-            break  # Stop searching once found
-    tab_id = selected_title.split('|')[1].strip()
+    selected_url = selected_title
+    tab_id = ""
+    if len(cboURL.cget('values')) > 0:
+        for url, title in url_title_map.items():
+            if title == selected_title:
+                selected_url = url
+                break  # Stop searching once found
+        tab_id = selected_title.split('|')[1].strip()
     print(f"Selected URL: {selected_url}, tab_id: {tab_id}")        
     
     # check if there is valid input
