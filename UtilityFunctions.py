@@ -4,6 +4,35 @@ import sqlite3
 import ffmpeg
 import subprocess
 import logging
+import shutil
+import argparse
+import sys, threading
+
+SOUND_NOTIF = './Sounds/arpeggio-467.mp3'
+SOUND_ERROR = './Sounds/glitch-notification.mp3'
+SOUND_PROCESS_COMPLETE = './Sounds/hitech-logo.mp3'
+
+# Function to play sound in a separate thread
+def play_sound(file_path):
+    threading.Thread(target=play_sound_threaded, args=(file_path,), daemon=True).start()
+
+def play_sound_threaded(file_path):
+    if not os.path.exists(file_path):
+        print(f"play_sound Error: File '{file_path}' not found.")
+        return
+
+    try:
+        if sys.platform == "darwin":  # macOS
+            subprocess.run(["afplay", file_path], check=True)
+        elif sys.platform == "win32":  # Windows
+            import winsound
+            winsound.PlaySound(file_path, winsound.SND_FILENAME)
+        elif sys.platform.startswith("linux"):  # Linux
+            subprocess.run(["aplay", file_path], check=True)
+        else:
+            print("play_sound: Unsupported operating system.")
+    except Exception as e:
+        print(f"Error playing sound: {e}")    
 
 def compare_and_remove_files(dir1, dir2):
     """
@@ -87,14 +116,9 @@ def batch_remove_keywords_case_insensitive(directory, keywords):
 
 # List of keywords to remove from filenames
 keywords_to_remove = [
-    "|",
-    "[",
-    "]",
-    "(",
-    ")",
-    "_",
     "Karaoke Version From Zoom Karaoke",
-    "_with_audio",
+    "Original Karaoke Sound",
+    "with audio",
     "karaoke version",
     "from zoom karaoke",
     "karaoke Instrumental",
@@ -102,25 +126,18 @@ keywords_to_remove = [
     "full band karaoke",
     "stripped",
     "karaoke hd",
+    "hd karaoke",
     "karafun",
     "karaoke",
     "as popularized by",
-    "🎤🎵",
     "lower key",
     "with lyrics",
-    "hd karaoke",
     "studio version",
     "version in the style of",
     "in the style of ",
     "piano version",
     "acoustic instrumental",
-    "()",
-    "[]",
-    "  ",
     ]
-
-# if __name__ == "__main__":
-#     batch_remove_keywords_case_insensitive(directory_path, keywords_to_remove)
 
 def remove_keywords(filename, keywords=None):
     global keywords_to_remove
@@ -131,17 +148,38 @@ def remove_keywords(filename, keywords=None):
     new_name = filename
     keywordtoremove = keywords_to_remove if keywords == [] else keywords
 
+    # clean invalid characters first
+    invalid_chars = ['(', ')', '[', ']', '*', '_', '|', '🎤', '🎵']
+    for char in invalid_chars:
+        new_name = new_name.replace(char, ' ')
+    
+    # Remove double spaces
+    while '  ' in new_name:
+        new_name = new_name.replace('  ', ' ')
+
     for keyword in keywordtoremove:
         # Create a regex pattern that is case-insensitive
-        if "(" in keyword and ")" in keyword:
-            pattern = r"\(" + re.escape(keyword[1:-1]) + r"\)" 
-        else:
-            pattern = r"\b" + re.escape(keyword) + r"\b" 
- 
+        pattern = r"\b" + re.escape(keyword) + r"\b" 
         new_name = re.sub(pattern, "", new_name, flags=re.IGNORECASE).strip()
-
+        
     # Strip leading/trailing whitespace and construct the new full path
     new_name = new_name.strip()
+    
+    # Remove double spaces
+    while '  ' in new_name:
+        new_name = new_name.replace('  ', ' ')
+    
+    # Ensure the filename does not end with whitespace
+    # Separate the filename and extension
+    name, ext = re.match(r"^(.*?)(\.[^.]*?)?$", new_name).groups()
+    
+    # Strip white spaces from the name and extension
+    name = name.strip()
+    ext = ext.strip() if ext else ""
+    
+    # Combine the name and extension again
+    new_name = f"{name}{ext}"
+        
     return " ".join(new_name.split())
 
 def fix_filenames_in_directory(directory):
@@ -365,6 +403,43 @@ def find_new_files(existing_files, directory_files):
             new_files.append(original)  # Add the original path
     return new_files
 
+def count_video_files(directory):
+    """
+    Counts the number of video files in the specified directory.
+
+    Parameters:
+        directory (str): The path to the directory containing the video files.
+
+    Returns:
+        int: The number of video files in the directory.
+    """
+    video_extensions = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv', '.webm']
+    video_count = 0
+
+    # Check if the provided directory exists
+    if not os.path.isdir(directory):
+        print(f"The provided path is not a directory: {directory}")
+        return 0
+
+    # Iterate through all files in the directory
+    for filename in os.listdir(directory):
+        # Construct the full path to the file
+        full_path = os.path.join(directory, filename)
+
+        # Skip directories
+        if os.path.isdir(full_path):
+            continue
+
+        # Skip hidden files
+        if filename.startswith('.'):
+            continue
+
+        # Check if the file has a video extension
+        if os.path.splitext(filename)[1].lower() in video_extensions:
+            video_count += 1
+
+    return video_count
+
 # Normalize paths for case-insensitive comparison
 def normalize_path(path):
     path = os.path.abspath(path).replace("\\", "/")
@@ -374,11 +449,16 @@ def normalize_path(path):
 def convert_vp9_to_avc(input_file, output_file):
     """Converts a VP9 encoded video to AVC (H.264) with real-time logging."""
     try:
+        # Delete output file if it exists
+        if os.path.isfile(output_file):
+            os.remove(output_file)
+            print(f"Deleted existing output file: {output_file}")
+
         command = [
             'ffmpeg',
             '-i', input_file,
             '-c:v', 'libx264',
-            '-preset', 'medium',
+            '-preset', 'ultrafast',
             '-crf', '23',
             '-c:a', 'aac',
             '-strict', 'experimental',
@@ -388,10 +468,10 @@ def convert_vp9_to_avc(input_file, output_file):
         print(f"Starting conversion: {os.path.basename(input_file)}")
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) #using Popen instead of run.
 
-        last_log = ""
+        last_log = None
         for line in process.stdout:
             if line.strip().startswith("frame="):
-                if last_log != "":
+                if last_log != None:
                     print(f"\r{line.strip()}", end='')
                 else:
                     last_log = line
@@ -410,6 +490,15 @@ def convert_vp9_to_avc(input_file, output_file):
         print("ffmpeg not found. Ensure it's installed and in your PATH.")
     except Exception as generic_error:
         print(f"A generic error has occurred: {generic_error}")
+
+def get_video_duration(video_path):
+    try:
+        probe = ffmpeg.probe(video_path)
+        duration_seconds = float(probe['format']['duration'])
+        return duration_seconds
+    except Exception as e:
+        print(f"Error probing video: {e}")
+        return None
 
 def get_video_codec_ffmpeg(filepath):
     try:
@@ -448,7 +537,7 @@ def check_video_codecs_in_directory(directory):
             else:
                 print(f"File: {filename} - Video codec not found or an error occurred")
 
-def convert_all_vp9_to_mp4(directory, test_mode=False):
+def convert_all_vp9_to_mp4(directory, test_mode=False, copy_files = False):
     """
     Converts all VP9 encoded videos in the specified directory to MP4 (H.264).
 
@@ -461,7 +550,8 @@ def convert_all_vp9_to_mp4(directory, test_mode=False):
     """
     print("+convert_all_vp9_to_mp4", directory)
     if not os.path.isdir(directory):
-        raise ValueError(f"The provided path is not a directory: {directory}")
+        print(f"!!!!!! The provided path is not a directory: {directory}")
+        return
 
     all_files = 0
     ctr = 0
@@ -470,32 +560,45 @@ def convert_all_vp9_to_mp4(directory, test_mode=False):
     for root, _, files in os.walk(directory):
         ctr = 0
         print(f"\n\n**** Processing directory: {root} ****\n")
+        file_count = count_video_files(root)
         for filename in sorted(files):
             if filename.startswith('.'):
                 continue
             full_path = os.path.join(root, filename)
             if os.path.isfile(full_path) and os.path.splitext(full_path)[1].lower() in ['.mp4', '.mkv', '.webm', '.avi', '.mov']:
                 ctr += 1
+                file_num = f'{ctr} of {file_count}'
                 all_files += 1
-                codec = get_video_codec_ffmpeg(full_path)
+                codec = get_video_codec_ffmpeg(full_path)                
                 if codec:
                     if test_mode:
-                        print(f"[{ctr}] {filename} - Video codec: {codec}")
+                        print(f"[{file_num}] {filename} - Video codec: {codec}")
                         if codec == "vp9" or codec == "av1":
                             need_convert += 1
+                            
+                            if copy_files:
+                                sub_dir = os.path.join(root, os.path.basename(root))
+                                if not os.path.exists(sub_dir):
+                                    os.makedirs(sub_dir)
+                                print(f"copying file to [{sub_dir}]")
+                                shutil.copy(full_path, sub_dir)
+                                # copy file to sub directory
+                                                                                    
+                        if codec != "h264":
+                            invalid_codec += 1
                     else:
                         if codec == "vp9" or codec == "av1":
-                            print(f"[{ctr}] {filename}")
+                            print(f"[{file_num}] {filename}")
                             output_file = os.path.splitext(full_path)[0] + "_2" + os.path.splitext(full_path)[1]
                             convert_vp9_to_avc(full_path, output_file)
                             print(f"File successfully converted to MP4\n")
                         else:
                             if codec == "h264":
-                                print(f"[{ctr}] {filename} - Video codec: {codec} -- skipped")
+                                print(f"[{file_num}] {filename} - Video codec: {codec} -- skipped")
                             else:
-                                print(f"[{ctr}] {filename} - Video codec: {codec} -- skipped *************************")
+                                print(f"[{file_num}] {filename} - Video codec: {codec} -- skipped *************************")
                 else:
-                    print(f"[{ctr}] {filename} - Video codec not found or an error occurred")
+                    print(f"[{file_num}] {filename} - Video codec not found or an error occurred")
                     invalid_codec += 1
 
     if test_mode:
@@ -506,42 +609,36 @@ def convert_all_vp9_to_mp4(directory, test_mode=False):
     print("All files processed.")
 
 # Replace with the path to your directory
-directory_path = "/Users/guyjasper/Desktop/Temp/KARAOKE FOR MEN"
+directory_path = "/Volumes/KINGSTONSSD/_Karaoke/_NEW_SONGS"
     
 if __name__ == "__main__":
-    # directory_path = "/Users/guyjasper/Desktop/Don & Irish/JPG_8X12" 
-    # update_karaoke_db(directory_path)
+    parser = argparse.ArgumentParser(description="Utility functions for processing files.")
+    parser.add_argument("--directory", type=str, required=True, help="Path to the directory to process.")
+    parser.add_argument("--update_db", action="store_true", help="Update the karaoke database.")
+    parser.add_argument("--check_codecs", action="store_true", help="Check video codecs in the directory.")
+    parser.add_argument("--convert_vp9", action="store_true", help="Convert VP9 videos to MP4 (H.264).")
+    parser.add_argument("--test_mode", action="store_true", help="Run in test mode (no actual conversion).")
+    parser.add_argument("--copy_files", action="store_true", help="Copy files to subdirectory before conversion.")
+    parser.add_argument("--remove_duplicates", action="store_true", help="Remove duplicate files in the directory.")
+    parser.add_argument("--fix_filenames", action="store_true", help="Fix filenames in the directory.")
     
-    # check_video_codecs_in_directory(directory_path)
-    convert_all_vp9_to_mp4(directory_path, True)
+    parser.add_argument("--play_sound", action="store_true", help="Play mp3 file.")
+
+    args = parser.parse_args()
+
+    if args.update_db:
+        update_karaoke_db(args.directory)
     
-    # filepath = '/Volumes/KINGSTONSSD/_Karaoke/BEST OF 90s/Goo Goo Dolls - Iris.mp4'
-    # print(f"File: {filepath}")
-    # codec = get_video_codec_ffmpeg(filepath)
-    # if codec:
-    #     print(f"Video codec: {codec}")
-    #     if codec == 'vp9':
-    #         print("Converting to AVC")            
-    #         output_file = filepath.replace(".mp4", "_2.mp4")
-    #         convert_vp9_to_avc(filepath, output_file)
-    #         print(f"File: {output_file}")
-    #         codec = get_video_codec_ffmpeg(output_file)
-    #         if codec:
-    #             print(f"Video codec: {codec}")
-    #         else:   
-    #             print("Video codec not found or an error occurred")
-    # else:   
-    #     print("Video codec not found or an error occurred")
-            
+    if args.check_codecs:
+        check_video_codecs_in_directory(args.directory)
     
-    # files = get_files_in_directory(directory_path)
-    # index=0
-    # for file in files:
-    #     index = index + 1
-    #     print(f"[{index}] {file}")
+    if args.convert_vp9:
+        print('convert_vp9', args.directory, args.test_mode, args.copy_files)
+        convert_all_vp9_to_mp4(args.directory, args.test_mode, args.copy_files)
     
-    # remove_duplicate_in_directory(directory_path)
-    # fix_filenames_in_directory("/Users/guyjasper/Documents/Guy/Projects/Python/DownloadYT/NEW_SONGS")
-    # temp = remove_keywords("Ilysb (stripped) - Male Key - Full Band Karaoke - Instrumental -  Lany.mp4")
-    # print(to_title_case(replace_double_spaces(temp)))
+    if args.remove_duplicates:
+        remove_duplicate_in_directory(args.directory)
+    
+    if args.fix_filenames:
+        fix_filenames_in_directory(args.directory)
 

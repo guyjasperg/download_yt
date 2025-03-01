@@ -13,15 +13,26 @@ import pychrome, html
 import os, subprocess, threading, queue
 import json  # For parsing JSON
 import sys
+import time
+import configparser
 
-RAW_FOLDER = "DOWNLOADS/"
-MERGED_FOLDER = "NEW_SONGS/"
+# Read settings from config.ini file
+config = configparser.ConfigParser()
+config.read('config.ini')
 
-SOUND_NOTIF = './Sounds/arpeggio-467.mp3'
-SOUND_ERROR = './Sounds/glitch-notification.mp3'
+RAW_FOLDER = config.get('PATHS', 'RAW_FOLDER') #, fallback='DOWNLOADS/')
+MERGED_FOLDER = config.get('PATHS', 'MERGED_FOLDER') #, fallback='NEW_SONGS/')
+
+# print('RAW_FOLDER',RAW_FOLDER)
+# print('MERGED_FOLDER',MERGED_FOLDER)
+
+# SOUND_NOTIF = './Sounds/arpeggio-467.mp3'
+# SOUND_ERROR = './Sounds/glitch-notification.mp3'
+# SOUND_PROCESS_COMPLETE = './Sounds/hitech-logo.mp3'
 
 # need to use youtube-po-token-generator to generate poToken and visitorData
-js_url =  './youtube-po-token-generator/examples/one-shot.js'
+# js_url =  './youtube-po-token-generator/examples/one-shot.js'
+js_url =  './one-shot.js'
 VISITOR_DATA = 'CgtKbVR3aVJQUTUxcyic5fy8BjIKCgJQSBIEGgAgbg%3D%3D'
 PO_TOKEN = 'MnRH5JFMhu5OqUfcnrah0Bf_GmXlDOP08QPu9RFMLSJtZQRocmea4VGzTCEgMfoGXur3S_IdichbZKmYiEUtWqG5wY4dj29DAypotNrsSry0NvUr8Zk16KWsr1ulG2oXvCRJ_8JsERbT3FzT2DaT1ONpPvVopA=='
 
@@ -39,7 +50,7 @@ message_queue = queue.Queue()
 # Make sure temp folders exists
 if not os.path.isdir(RAW_FOLDER):
     os.mkdir(RAW_FOLDER)
-    
+        
 if not os.path.isdir(MERGED_FOLDER):
     os.mkdir(MERGED_FOLDER)
 
@@ -122,41 +133,41 @@ def Downloadfiles(videostream, audiostream):
             #title = CleanFilename(videostream.default_filename)
             message_queue.put(f"[{video_filename}]\n")
             ys = yt.streams.get_by_itag(videostream.itag)
-            ys.download(filename=f"{RAW_FOLDER}{video_filename}")
+            ys.download(filename=video_filename, output_path=RAW_FOLDER)
 
         if audiostream:
             #title = audiostream.default_filename
             message_queue.put(f"\n[{audio_filename}]\n")
             ys = yt.streams.get_by_itag(audiostream.itag)
-            ys.download(filename=f"{RAW_FOLDER}{audio_filename}")
+            ys.download(filename=audio_filename, output_path=RAW_FOLDER)
 
         return True
     except Exception as e:
         message_queue.put(f"ERROR: An error occurred downloading files. [{e}]")
         return False
 
-def play_sound_threaded(file_path):
-    if not os.path.exists(file_path):
-        insertLog(f"play_sound Error: File '{file_path}' not found.")
-        return
+# def play_sound_threaded(file_path):
+#     if not os.path.exists(file_path):
+#         insertLog(f"play_sound Error: File '{file_path}' not found.")
+#         return
 
-    try:
-        if sys.platform == "darwin":  # macOS
-            subprocess.run(["afplay", file_path], check=True)
-        elif sys.platform == "win32":  # Windows
-            import winsound
-            winsound.PlaySound(file_path, winsound.SND_FILENAME)
-        elif sys.platform.startswith("linux"):  # Linux
-            subprocess.run(["aplay", file_path], check=True)
-        else:
-            insertLog("play_sound: Unsupported operating system.")
-    except Exception as e:
-        insertLog(f"Error playing sound: {e}")    
-    # os.system("afplay ./arpeggio-467.mp3")
+#     try:
+#         if sys.platform == "darwin":  # macOS
+#             subprocess.run(["afplay", file_path], check=True)
+#         elif sys.platform == "win32":  # Windows
+#             import winsound
+#             winsound.PlaySound(file_path, winsound.SND_FILENAME)
+#         elif sys.platform.startswith("linux"):  # Linux
+#             subprocess.run(["aplay", file_path], check=True)
+#         else:
+#             insertLog("play_sound: Unsupported operating system.")
+#     except Exception as e:
+#         insertLog(f"Error playing sound: {e}")    
+#     # os.system("afplay ./arpeggio-467.mp3")
     
-# Function to play sound in a separate thread
-def play_sound(file_path):
-    threading.Thread(target=play_sound_threaded, args=(file_path,), daemon=True).start()
+# # Function to play sound in a separate thread
+# def play_sound(file_path):
+#     threading.Thread(target=play_sound_threaded, args=(file_path,), daemon=True).start()
     
 # Periodically check the queue and update the UI
 def process_queue():
@@ -231,7 +242,7 @@ def start_download_thread(url, tab_id):
                             break
         
         if selectedVideoStream != None:
-            video_filename = f"{remove_keywords(CleanFilename(selectedVideoStream.default_filename),"")}"
+            video_filename = f"{remove_keywords(selectedVideoStream.default_filename)}"
             message_queue.put(f"selected video stream: [{selectedVideoStream.itag}] {selectedVideoStream.resolution}")
             if selectedVideoStream.includes_audio_track == False:
                 message_queue.put("No audio track")
@@ -252,7 +263,7 @@ def start_download_thread(url, tab_id):
         audio_filename = ""
         if selectedAudioStream != None:
             #print(selectedAudioStream.default_filename)
-            audio_filename = f"{remove_keywords(CleanFilename(selectedAudioStream.default_filename),"")}"
+            audio_filename = f"{remove_keywords(selectedAudioStream.default_filename)}"
             message_queue.put(f"selected audio stream: [{selectedAudioStream.itag}] {selectedAudioStream.abr}\n")
         else:
             message_queue.put("No audio stream selected")
@@ -280,12 +291,13 @@ def start_download_thread(url, tab_id):
                 '-i', f"{RAW_FOLDER}{video_filename}",
                 '-i', f"{RAW_FOLDER}{audio_filename}",
                 '-loglevel', 'warning',
+                '-preset', 'ultrafast',  # Use ultrafast preset for faster encoding
                 '-c:v', 'copy',  # Copy video codec (no re-encoding)
                 '-c:a', 'aac',   # Use AAC codec for audio
                 '-strict', 'experimental',  # To ensure ffmpeg accepts the audio format
                 output_file
             ]
-            subprocess.run(command, check=True)
+            subprocess.run(command, check=True)                
 
             # If successful, delete the original video and audio files (optional)
             os.remove(f"{RAW_FOLDER}{video_filename}")
@@ -599,12 +611,14 @@ lbl_visitor = tk.Label(frame_poToken, text="visitor")
 lbl_visitor.grid(row=0,column=0, sticky=tk.W)
 
 txt_visitor = tk.Entry(frame_poToken, width=55)
+txt_visitor.insert(tk.END, VISITOR_DATA)
 txt_visitor.grid(row=0,column=1, columnspan=3)
 
 lbl_poToken = tk.Label(frame_poToken, text="poToken")
 lbl_poToken.grid(row=1,column=0, sticky=tk.W)
 
 txt_poToken = tk.Entry(frame_poToken, width=55)
+txt_poToken.insert(tk.END,PO_TOKEN)
 txt_poToken.grid(row=1,column=1, columnspan=3)
 
 frame = tk.Frame()
@@ -659,9 +673,9 @@ btn_clear_logs.grid(row=0, column=2, sticky=tk.S)
 # btn_clear_logs.pack(side=tk.TOP, anchor=tk.CENTER)  # Center the button
 
 # Schedule the initialization function to run after the GUI starts
-insertLog('Getting poToken...')
-download_button.config(state=tk.DISABLED)
-root.after(0, get_po_token)
+# insertLog('Getting poToken...')
+# download_button.config(state=tk.DISABLED)
+# root.after(0, get_po_token)
 
 root.resizable(width=False, height=False)  # Disable resizing in both directions
 
