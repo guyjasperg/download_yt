@@ -1,12 +1,16 @@
+#!/usr/bin/env python3
+
 import os
 import re
 import sqlite3
-import ffmpeg
+# import ffmpeg
 import subprocess
 import logging
 import shutil
 import argparse
 import sys, threading
+import json
+import requests
 
 SOUND_NOTIF = './Sounds/arpeggio-467.mp3'
 SOUND_ERROR = './Sounds/glitch-notification.mp3'
@@ -149,7 +153,7 @@ def remove_keywords(filename, keywords=None):
     keywordtoremove = keywords_to_remove if keywords == [] else keywords
 
     # clean invalid characters first
-    invalid_chars = ['(', ')', '[', ']', '*', '_', '|', '🎤', '🎵']
+    invalid_chars = ['(', ')', '[', ']', '*', '_', '|', '🎤', '🎵','♫','♪']
     for char in invalid_chars:
         new_name = new_name.replace(char, ' ')
     
@@ -314,10 +318,10 @@ def replace_double_spaces(input_string):
     # result = replace_double_spaces(example_string)
     # print(result)  # Output: "This is an example string with double spaces."
 
-def update_karaoke_db(directory_path):
+def update_karaoke_db(directory_path, db_path, upload_to_server=False, server_url=""):
     print("+update_karaoke_db")
     # Connect to the SQLite database
-    db_path = "/Users/guyjasper/Library/Application Support/OpenKJ/OpenKJ/openkj.sqlite"  # Replace with the actual path to your database file
+    # db_path = "/Users/guyjasper/Library/Application Support/OpenKJ/OpenKJ/openkj.sqlite"  # Replace with the actual path to your database file
     
     # check if file exists
     if not os.path.isfile(db_path):
@@ -331,7 +335,13 @@ def update_karaoke_db(directory_path):
         #get all songs from DB with same folder 
         cursor.execute("SELECT path FROM dbsongs where path like ? order by path", (f"{directory_path}%",))    
         rows = cursor.fetchall()
-        data_in_db = {normalize_path(row[0]): row[0] for row in rows}
+        data_in_db = sorted([row[0] for row in rows])
+        
+        # log the data
+        # print('Data in database')
+        # for file in data_in_db:
+        #     print(file)
+        # data_in_db = {normalize_path(row[0]): row[0] for row in rows}
         
         #get all files in folder        
         files_in_folder = get_files_in_directory(directory_path)
@@ -339,41 +349,58 @@ def update_karaoke_db(directory_path):
         #get new files in yet in DB
         new_files = find_new_files(data_in_db, files_in_folder)
         
+        # Initialize the list to store songs to add
+        songs_to_add = []
+        
         print(f"new files to add {len(new_files)}")
         for file in new_files:
-            print(file)
-        
-        # Fetch all file paths
-        # cursor.execute("SELECT DISTINCT path FROM sourceDirs")
-        # rows = cursor.fetchall()
-
-        # bFolderFound = False        
-        # for row in rows:
-        #     filepath = row[0]
-            
-        #     #get parent folder
-        #     last_slash = filepath.rfind('/')
-        #     if last_slash != -1:
-        #         parent_folder = filepath[last_slash + 1:]
-        #         print(parent_folder)
-        #         if parent_folder == folder:
-        #             bFolderFound = True
-        #             break
-        #         # parent_folders.add(parent_folder)
-        
-        # if bFolderFound == True:
-        #     # query current entries
-        #     cursor.execute("SELECT path FROM dbsongs where path like ? order by path", (f"{folder}%",))    
-        #     rows = cursor.fetchall()
-        #     print(len(rows))
-        #     index = 0
-        #     for row in rows:
-        #         index = index + 1
-        #         filepath = row[0]
-        #         last_slash = filepath.rfind('/')
-        #         if last_slash != -1:
-        #             filename = filepath[last_slash+1:]
-        #             print(f"[{index}] {filename}")
+            filename = os.path.basename(file)
+            if filename.count('-') == 1:
+                filename_no_ext = os.path.splitext(filename)[0]
+                title, artist = filename_no_ext.rsplit('-', 1)
+                artist = artist.strip()
+                title = title.strip()
+                
+                # Get the duration of the video file
+                duration = get_video_duration(file)
+                print(f'Artist: {artist}, Title: {title}',duration)
+                # Save artist, title, filepath, and duration to a list for later batch saving to database
+                songs_to_add.append((artist, title, file, duration))
+            else:
+                print(f"\nFilename does not contain exactly one '-': {filename}")
+                artist = input("\nEnter Artist name: ").strip()
+                title = input("Enter Title: ").strip()
+                
+                if artist and title:
+                    duration = get_video_duration(file)
+                    print(f'Artist: {artist}, Title: {title}',duration)
+                    # Save artist, title, filepath, and duration to a list for later batch saving to database
+                    songs_to_add.append((artist, title, file, duration))
+                else:
+                    print("skipping file...")
+                
+        if songs_to_add:
+            print('saving to database...')
+            try:
+                # Begin a transaction
+                conn.execute("BEGIN TRANSACTION;")
+                
+                # Insert songs into the database
+                cursor.executemany("INSERT INTO dbsongs (artist, title, path, duration) VALUES (?, ?, ?, ?);", songs_to_add)
+                
+                # Commit the transaction
+                conn.commit()
+                conn.close()
+                print(f"Inserted {len(songs_to_add)} new songs into the database.")
+                
+                if upload_to_server and server_url!="":
+                    print("Uploading database to server...")
+                    upload_karaoke_db(db_path, server_url)
+                
+            except sqlite3.Error as e:
+                # Rollback the transaction in case of error
+                conn.rollback()
+                print(f"An error occurred while inserting songs: {e}")
         
         print("All files processed.")
     
@@ -384,23 +411,39 @@ def update_karaoke_db(directory_path):
         # Close the connection
         conn.close()
         print("-update_karaoke_db")
-        
+
+def upload_karaoke_db(dbFile, server_url):
+    """Uploads a file to a Node.js Express server."""
+    try:
+        with open(dbFile, 'rb') as file:
+            files = {'dbFile': (file.name, file, 'application/octet-stream')} #application/octet-stream is a safe default.
+            response = requests.post(server_url, files=files)
+            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+            print(response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"Error uploading file: {e}")
+    except FileNotFoundError:
+        print(f"File not found: {dbFile}")    
+
 def get_files_in_directory(directory):
     filepaths = []
     for root, _, files in os.walk(directory):
         for file in files:
             if not file.startswith('.'):
                 filepath = os.path.join(root, file)
-                normalized = normalize_path(filepath)
-                print(filepath,normalized)
-                filepaths[f"\'{normalized}\'"] = filepath  # Map normalized to original
+                filepaths.append(filepath)
+    
+    filepaths = sorted(filepaths)
+    # print('Files in directory')
+    # for file in filepaths:
+    #     print(file)
     return filepaths
 
 def find_new_files(existing_files, directory_files):
     new_files = []
-    for normalized, original in directory_files.items():
-        if normalized not in existing_files:
-            new_files.append(original)  # Add the original path
+    for file in directory_files:
+        if file not in existing_files:
+            new_files.append(file)  # Add the original path
     return new_files
 
 def count_video_files(directory):
@@ -484,6 +527,8 @@ def convert_vp9_to_avc(input_file, output_file):
             print(f"\nConversion successful")
             print('Deleting original file...')
             os.remove(input_file)  # delete the original file
+            if input_file.lower().endswith(".mkv"):
+                input_file = os.path.splitext(input_file)[0] + ".mp4"
             os.rename(output_file, input_file)  # rename the new file to the original filename
 
     except FileNotFoundError:
@@ -493,24 +538,51 @@ def convert_vp9_to_avc(input_file, output_file):
 
 def get_video_duration(video_path):
     try:
-        probe = ffmpeg.probe(video_path)
+        command = [
+            "ffprobe",
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+            video_path,
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        probe = json.loads(result.stdout)
+        
         duration_seconds = float(probe['format']['duration'])
-        return duration_seconds
-    except Exception as e:
-        print(f"Error probing video: {e}")
+        return int(duration_seconds * 1000)
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Error running ffprobe: {e}")
         return None
+    except json.JSONDecodeError as e:
+        print(f"Error parsing ffprobe output: {e}")
+        return None    
 
 def get_video_codec_ffmpeg(filepath):
     try:
-        probe = ffmpeg.probe(filepath)
-        video_stream = next((stream for stream in probe["streams"] if stream["codec_type"] == "video"), None)
+        command = [
+            "ffprobe",
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+            filepath,
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        probe = json.loads(result.stdout)
         
+        video_stream = next((stream for stream in probe["streams"] if stream["codec_type"] == "video"), None)
         if video_stream:
-            return video_stream["codec_name"]
+            return video_stream['codec_name']
         else:
             return None
-    except ffmpeg.Error as e:
-        print(f"Error: {e.stderr.decode()}")
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Error running ffprobe: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error parsing ffprobe output: {e}")
         return None
 
 def check_video_codecs_in_directory(directory):
@@ -573,11 +645,12 @@ def convert_all_vp9_to_mp4(directory, test_mode=False, copy_files = False):
                 if codec:
                     if test_mode:
                         print(f"[{file_num}] {filename} - Video codec: {codec}")
-                        if codec == "vp9" or codec == "av1":
+                        if codec == "vp9" or codec == "av1" or os.path.splitext(full_path)[1].lower() == ".mkv":
                             need_convert += 1
                             
                             if copy_files:
-                                sub_dir = os.path.join(root, os.path.basename(root))
+                                sub_dir = os.path.join(root, os.path.basename(root.rstrip('/')))
+                                print(sub_dir)
                                 if not os.path.exists(sub_dir):
                                     os.makedirs(sub_dir)
                                 print(f"copying file to [{sub_dir}]")
@@ -587,9 +660,12 @@ def convert_all_vp9_to_mp4(directory, test_mode=False, copy_files = False):
                         if codec != "h264":
                             invalid_codec += 1
                     else:
-                        if codec == "vp9" or codec == "av1":
+                        if codec == "vp9" or codec == "av1" or os.path.splitext(full_path)[1].lower() == ".mkv":
                             print(f"[{file_num}] {filename}")
-                            output_file = os.path.splitext(full_path)[0] + "_2" + os.path.splitext(full_path)[1]
+                            if os.path.splitext(full_path)[1].lower() == ".mkv":
+                                output_file = os.path.splitext(full_path)[0] + "_2.mp4"
+                            else:
+                                output_file = os.path.splitext(full_path)[0] + "_2" + os.path.splitext(full_path)[1]
                             convert_vp9_to_avc(full_path, output_file)
                             print(f"File successfully converted to MP4\n")
                         else:
@@ -608,37 +684,86 @@ def convert_all_vp9_to_mp4(directory, test_mode=False, copy_files = False):
 
     print("All files processed.")
 
+def get_all_none_mp4(directory):
+    """
+    Converts all VP9 encoded videos in the specified directory to MP4 (H.264).
+
+    Parameters:
+        directory (str): The path to the directory containing the video files.
+        bTest (bool): If True, only prints the files that need conversion without converting them.
+
+    Returns:
+        None: The function processes the files in place.
+    """
+    print("+get_all_none_mp4", directory)
+    if not os.path.isdir(directory):
+        print(f"!!!!!! The provided path is not a directory: {directory}")
+        return
+
+    all_files = 0
+    ctr = 0
+    need_convert = 0
+    invalid_codec = 0
+    for root, _, files in os.walk(directory):
+        ctr = 0
+        print(f"\n\n**** Processing directory: {root} ****\n")
+        # file_count = count_video_files(root)
+        for filename in sorted(files):
+            if filename.startswith('.'):
+                continue
+            full_path = os.path.join(root, filename)
+            if os.path.isfile(full_path) and os.path.splitext(full_path)[1].lower() in ['.mkv', '.webm', '.avi', '.mov']:
+                ctr += 1
+                file_num = f'{ctr}'
+                print(f"[{file_num}] {filename}")
+                
+    print("All files processed.")
+
 # Replace with the path to your directory
 directory_path = "/Volumes/KINGSTONSSD/_Karaoke/_NEW_SONGS"
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Utility functions for processing files.")
-    parser.add_argument("--directory", type=str, required=True, help="Path to the directory to process.")
-    parser.add_argument("--update_db", action="store_true", help="Update the karaoke database.")
+    # parser.add_argument("--directory", type=str, required=True, help="Path to the directory to process.")
+    # parser.add_argument("--update_db", action="store_true", help="Update the karaoke database.")
     parser.add_argument("--check_codecs", action="store_true", help="Check video codecs in the directory.")
     parser.add_argument("--convert_vp9", action="store_true", help="Convert VP9 videos to MP4 (H.264).")
     parser.add_argument("--test_mode", action="store_true", help="Run in test mode (no actual conversion).")
     parser.add_argument("--copy_files", action="store_true", help="Copy files to subdirectory before conversion.")
     parser.add_argument("--remove_duplicates", action="store_true", help="Remove duplicate files in the directory.")
     parser.add_argument("--fix_filenames", action="store_true", help="Fix filenames in the directory.")
-    
+    parser.add_argument("--get_none_mp4", action="store_true", help="Get all other video files.")
     parser.add_argument("--play_sound", action="store_true", help="Play mp3 file.")
+    
+    subparsers = parser.add_subparsers(dest="command")
+    
+    # Subparser for the get_files_in_directory command
+    parser_vid = subparsers.add_parser("vid_utils", help="ffmpeg utilities")
+    parser_vid.add_argument("--directory", required=True, help="The directory to list video files from.")
+    parser_vid.add_argument("--database", required=True, help="Sqlite database")
+    parser_vid.add_argument("--test_mode", action="store_true")
+    parser_vid.add_argument("--upload", action="store_true", help="Uploads database to server after updating")
+    parser_vid.add_argument("--server_url", required='--upload' in sys.argv, help="Server URL where to upload database")
 
     args = parser.parse_args()
-
-    if args.update_db:
-        update_karaoke_db(args.directory)
     
-    if args.check_codecs:
-        check_video_codecs_in_directory(args.directory)
-    
-    if args.convert_vp9:
-        print('convert_vp9', args.directory, args.test_mode, args.copy_files)
-        convert_all_vp9_to_mp4(args.directory, args.test_mode, args.copy_files)
-    
-    if args.remove_duplicates:
-        remove_duplicate_in_directory(args.directory)
-    
-    if args.fix_filenames:
-        fix_filenames_in_directory(args.directory)
+    if args.command == "vid_utils":
+        print("Manage karaoke video files...", args.directory, args.database)
+        update_karaoke_db(args.directory, args.database, args.upload, args.server_url)
+    else:        
+        if args.check_codecs:
+            check_video_codecs_in_directory(args.directory)
+        
+        if args.convert_vp9:
+            print('convert_vp9', args.directory, args.test_mode, args.copy_files)
+            convert_all_vp9_to_mp4(args.directory, args.test_mode, args.copy_files)
+        
+        if args.remove_duplicates:
+            remove_duplicate_in_directory(args.directory)
+        
+        if args.fix_filenames:
+            fix_filenames_in_directory(args.directory)
+            
+        if args.get_none_mp4:
+            get_all_none_mp4(args.directory)
 
