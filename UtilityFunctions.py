@@ -149,11 +149,12 @@ def remove_keywords(filename, keywords=None):
     if keywords is None:
         keywords = []
 
-    new_name = filename
+    name, ext = os.path.splitext(filename)
+    new_name = name.strip()
     keywordtoremove = keywords_to_remove if keywords == [] else keywords
 
     # clean invalid characters first
-    invalid_chars = ['(', ')', '[', ']', '*', '_', '|', '🎤', '🎵','♫','♪']
+    invalid_chars = ['(', ')', '[', ']','{','}', '*', '_', '|', '🎤', '🎵','♫','♪']
     for char in invalid_chars:
         new_name = new_name.replace(char, ' ')
     
@@ -168,23 +169,20 @@ def remove_keywords(filename, keywords=None):
         
     # Strip leading/trailing whitespace and construct the new full path
     new_name = new_name.strip()
+    # Ensure new_name does not end with '-', '.', or '_'
+    while new_name and new_name[-1] in '-._':
+        new_name = new_name[:-1]
     
     # Remove double spaces
     while '  ' in new_name:
-        new_name = new_name.replace('  ', ' ')
-    
-    # Ensure the filename does not end with whitespace
-    # Separate the filename and extension
-    name, ext = re.match(r"^(.*?)(\.[^.]*?)?$", new_name).groups()
+        new_name = new_name.replace('  ', ' ')        
     
     # Strip white spaces from the name and extension
-    name = name.strip()
-    ext = ext.strip() if ext else ""
+    new_name = new_name.strip()
     
-    # Combine the name and extension again
-    new_name = f"{name}{ext}"
-        
-    return " ".join(new_name.split())
+    new_name = f"{new_name}{ext}"
+    print(new_name)
+    return new_name
 
 def fix_filenames_in_directory(directory):
     """
@@ -318,14 +316,18 @@ def replace_double_spaces(input_string):
     # result = replace_double_spaces(example_string)
     # print(result)  # Output: "This is an example string with double spaces."
 
-def update_karaoke_db(directory_path, db_path, upload_to_server=False, server_url=""):
+def update_karaoke_db(directory_path, db_path,message_callback=None, upload_to_server=False, server_url=""):
     print("+update_karaoke_db")
+    if message_callback:
+        message_callback("Updating karaoke database...")
     # Connect to the SQLite database
     # db_path = "/Users/guyjasper/Library/Application Support/OpenKJ/OpenKJ/openkj.sqlite"  # Replace with the actual path to your database file
     
     # check if file exists
     if not os.path.isfile(db_path):
         print(f"Database file not found: {db_path}")
+        if message_callback:
+            message_callback(f"Database file not found: {db_path}")
         return
     
     try:
@@ -353,6 +355,9 @@ def update_karaoke_db(directory_path, db_path, upload_to_server=False, server_ur
         songs_to_add = []
         
         print(f"new files to add {len(new_files)}")
+        if message_callback:
+            message_callback(f"new files to add {len(new_files)}")
+            
         for file in new_files:
             filename = os.path.basename(file)
             if filename.count('-') == 1:
@@ -364,10 +369,14 @@ def update_karaoke_db(directory_path, db_path, upload_to_server=False, server_ur
                 # Get the duration of the video file
                 duration = get_video_duration(file)
                 print(f'Artist: {artist}, Title: {title}',duration)
+                if message_callback:
+                    message_callback(f'Artist: {artist}, Title: {title}, Duration: {duration}')
                 # Save artist, title, filepath, and duration to a list for later batch saving to database
                 songs_to_add.append((artist, title, file, duration))
             else:
                 print(f"\nFilename does not contain exactly one '-': {filename}")
+                if message_callback:
+                    message_callback(f"\nFilename does not contain exactly one '-': {filename}")
                 artist = input("\nEnter Artist name: ").strip()
                 title = input("Enter Title: ").strip()
                 
@@ -378,9 +387,13 @@ def update_karaoke_db(directory_path, db_path, upload_to_server=False, server_ur
                     songs_to_add.append((artist, title, file, duration))
                 else:
                     print("skipping file...")
+                    if message_callback:
+                        message_callback("skipping file...")
                 
         if songs_to_add:
             print('saving to database...')
+            if message_callback:
+                message_callback("saving to database...")
             try:
                 # Begin a transaction
                 conn.execute("BEGIN TRANSACTION;")
@@ -392,25 +405,39 @@ def update_karaoke_db(directory_path, db_path, upload_to_server=False, server_ur
                 conn.commit()
                 conn.close()
                 print(f"Inserted {len(songs_to_add)} new songs into the database.")
+                if message_callback:
+                    message_callback(f"Inserted {len(songs_to_add)} new songs into the database.")
                 
                 if upload_to_server and server_url!="":
                     print("Uploading database to server...")
+                    if message_callback:
+                        message_callback("Uploading database to server...")
                     upload_karaoke_db(db_path, server_url)
                 
             except sqlite3.Error as e:
                 # Rollback the transaction in case of error
                 conn.rollback()
                 print(f"An error occurred while inserting songs: {e}")
-        
+                if message_callback:
+                    message_callback(f"An error occurred while inserting songs: {e}")
         print("All files processed.")
+        if message_callback:
+            message_callback("All files processed.")
     
     except sqlite3.Error as e:
         print(f"An error occurred: {e}")
+        if message_callback:
+            message_callback(f"An error occurred: {e}")
         print("Database not updated.")
+        if message_callback:
+            message_callback("Database not updated.")
     finally:
         # Close the connection
-        conn.close()
+        if conn:
+            conn.close()
         print("-update_karaoke_db")
+        if message_callback:
+            message_callback("-update_karaoke_db")
 
 def upload_karaoke_db(dbFile, server_url):
     """Uploads a file to a Node.js Express server."""
@@ -719,6 +746,97 @@ def get_all_none_mp4(directory):
                 
     print("All files processed.")
 
+def download_karaoke_db(db_path, server_url, message_callback=None):
+    """
+    Downloads the karaoke database file from the server.
+    
+    Args:
+        db_path (str): Local path where to save the database file
+        server_url (str): URL of the server's download endpoint
+        message_callback (function): Optional callback function to handle status messages
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Send GET request to download the file
+        response = requests.get(server_url, stream=True)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        
+        # Create a backup of the existing database if it exists
+        if os.path.exists(db_path):
+            backup_path = f"{db_path}.backup"
+            shutil.copy2(db_path, backup_path)
+            if message_callback:
+                message_callback(f"Created backup at: {backup_path}")
+        
+        # Save the downloaded file
+        with open(db_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        
+        if message_callback:
+            message_callback(f"Database downloaded successfully to: {db_path}")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Error downloading database: {str(e)}"
+        if message_callback:
+            message_callback(error_msg)
+        return False
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        if message_callback:
+            message_callback(error_msg)
+        return False
+
+def delete_song_from_db(db_path, song_id, song_filepath):
+    """Delete a song from the database by its ID and remove the associated file.
+    
+    Args:
+        db_path (str): Path to the SQLite database file
+        song_id (int): ID of the song to delete
+        song_filepath (str): Path to the song file to delete
+        
+    Returns:
+        bool: True if deletion was successful, False otherwise
+        
+    Raises:
+        sqlite3.Error: If there's a database error
+        OSError: If there's an error deleting the file
+    """
+    conn = None
+    try:
+        # Connect to the database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Delete from database
+        delete_query = "DELETE FROM dbsongs WHERE songid = ?"
+        cursor.execute(delete_query, (song_id,))
+        conn.commit()
+        
+        # Delete the actual file if it exists
+        if os.path.exists(song_filepath):
+            os.remove(song_filepath)
+            print(f"Deleted file: {song_filepath}")
+        else:
+            print(f"File not found: {song_filepath}")
+        
+        return True
+        
+    except sqlite3.Error as e:
+        raise e
+    except OSError as e:
+        # If file deletion fails, rollback database changes
+        if conn:
+            conn.rollback()
+        raise e
+    finally:
+        if conn:
+            conn.close()
+
 # Replace with the path to your directory
 directory_path = "/Volumes/KINGSTONSSD/_Karaoke/_NEW_SONGS"
     
@@ -734,6 +852,7 @@ if __name__ == "__main__":
     parser.add_argument("--fix_filenames", action="store_true", help="Fix filenames in the directory.")
     parser.add_argument("--get_none_mp4", action="store_true", help="Get all other video files.")
     parser.add_argument("--play_sound", action="store_true", help="Play mp3 file.")
+    parser.add_argument("--clean_filename", action="store_true", help="Remove keywords in filename")
     
     subparsers = parser.add_subparsers(dest="command")
     
@@ -749,21 +868,20 @@ if __name__ == "__main__":
     
     if args.command == "vid_utils":
         print("Manage karaoke video files...", args.directory, args.database)
-        update_karaoke_db(args.directory, args.database, args.upload, args.server_url)
+        update_karaoke_db(args.directory, args.database,None, args.upload, args.server_url)
     else:        
-        if args.check_codecs:
-            check_video_codecs_in_directory(args.directory)
-        
-        if args.convert_vp9:
-            print('convert_vp9', args.directory, args.test_mode, args.copy_files)
-            convert_all_vp9_to_mp4(args.directory, args.test_mode, args.copy_files)
-        
-        if args.remove_duplicates:
-            remove_duplicate_in_directory(args.directory)
-        
-        if args.fix_filenames:
-            fix_filenames_in_directory(args.directory)
-            
-        if args.get_none_mp4:
-            get_all_none_mp4(args.directory)
+        match args:
+            case _ if args.check_codecs:
+                check_video_codecs_in_directory(args.directory)
+            case _ if args.convert_vp9:
+                print('convert_vp9', args.directory, args.test_mode, args.copy_files)
+                convert_all_vp9_to_mp4(args.directory, args.test_mode, args.copy_files)
+            case _ if args.remove_duplicates:
+                remove_duplicate_in_directory(args.directory)
+            case _ if args.fix_filenames:
+                fix_filenames_in_directory(args.directory)
+            case _ if args.get_none_mp4:
+                get_all_none_mp4(args.directory)
+            case _ if args.clean_filename:
+                remove_keywords('The Police - Message in a Bottle -.mp4')
 

@@ -15,6 +15,9 @@ import json  # For parsing JSON
 import sys
 import time
 import configparser
+import requests
+import shutil
+import sqlite3
 
 # Read settings from config.ini file
 config = configparser.ConfigParser()
@@ -593,62 +596,793 @@ def launch_chrome_with_debugging(port=9222):
     except Exception as e:
         raise Exception(f"Error launching Chrome: {e}")
 
+def make_button_transparent(style):
+    style.configure("TButton", relief="flat", background=root.cget("background"), borderwidth=0)
+    style.map("TButton",
+              background=[("active", root.cget("background"))],
+              foreground=[("active", "blue")])
+
+def open_downloads_folder():
+    """Opens the downloaded songs folder in Finder/Explorer."""
+    try:
+        if sys.platform == "darwin":  # macOS
+            subprocess.run(["open", MERGED_FOLDER])
+        elif sys.platform == "win32":  # Windows
+            os.startfile(MERGED_FOLDER)
+        elif sys.platform.startswith("linux"):  # Linux
+            subprocess.run(["xdg-open", MERGED_FOLDER])
+        else:
+            insertLog("Unsupported operating system for opening folders.")
+    except Exception as e:
+        error_msg = f"Error opening folder: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+
+def get_db_path():
+    """Get the path to the SQLite database file."""
+    return config.get('PATHS', 'DATABASE_PATH', fallback='mydatabase.sqlite')
+
+def get_server_url():
+    """Get the appropriate server URL based on production mode."""
+    if production_var.get():
+        return config.get('PATHS', 'PROD_SERVER_URL', fallback='')
+    return config.get('PATHS', 'SERVER_URL', fallback='')
+
+def get_upload_url():
+    """Get the appropriate upload URL based on production mode."""
+    if production_var.get():
+        return config.get('PATHS', 'PROD_SERVER_URL_UPLOAD', fallback='')
+    return config.get('PATHS', 'SERVER_URL_UPLOAD', fallback='')
+
+def search_database():
+    """Search the database based on the query in the search box."""
+    query = txt_search.get().strip()
+    if not query:
+        messagebox.showwarning("Warning", "Please enter a search query.")
+        return
+
+    try:
+        # Clear existing items in the treeview
+        for item in tree.get_children():
+            tree.delete(item)
+
+        # Connect to the database
+        db_path = get_db_path()
+        if not os.path.exists(db_path):
+            messagebox.showerror("Error", "Database file not found. Please download the database first.")
+            return
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Search in both artist and title columns
+        search_query = f"%{query}%"
+        cursor.execute("""
+            SELECT songid, artist, title, path 
+            FROM dbsongs 
+            WHERE artist LIKE ? OR title LIKE ?
+            ORDER BY artist, title
+        """, (search_query, search_query))
+
+        # Add results to the treeview
+        for row in cursor.fetchall():
+            tree.insert('', 'end', values=row)
+
+        conn.close()
+
+        # Show message if no results found
+        if not tree.get_children():
+            messagebox.showinfo("Search Results", "No matching songs found.")
+
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Error searching database: {str(e)}")
+    except Exception as e:
+        messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+
+def download_database():
+    """Download the songs database from the server."""
+    try:
+        server_url = get_server_url()
+        if not server_url:
+            messagebox.showerror("Error", "Server URL not configured. Please check configuration.")
+            return
+
+        # Download the database file
+        response = requests.get(server_url)
+        response.raise_for_status()
+
+        # Save the downloaded file
+        with open(get_db_path(), 'wb') as f:
+            f.write(response.content)
+
+        messagebox.showinfo("Success", "Database downloaded successfully!")
+        
+        # Clear and refresh the search results if there was a previous search
+        if txt_search.get().strip():
+            search_database()
+
+    except requests.exceptions.RequestException as e:
+        messagebox.showerror("Download Error", f"Error downloading database: {str(e)}")
+    except Exception as e:
+        messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+
+def upload_database():
+    """Upload the songs database to the server."""
+    try:
+        upload_url = get_upload_url()
+        if not upload_url:
+            messagebox.showerror("Error", "Upload URL not configured. Please check configuration.")
+            return
+
+        db_path = get_db_path()
+        if not os.path.exists(db_path):
+            messagebox.showerror("Error", "Database file not found.")
+            return
+
+        # Upload the database file
+        with open(db_path, 'rb') as f:
+            response = requests.post(upload_url, files={'dbFile': f})
+            response.raise_for_status()
+
+        messagebox.showinfo("Success", "Database uploaded successfully!")
+
+    except requests.exceptions.RequestException as e:
+        messagebox.showerror("Upload Error", f"Error uploading database: {str(e)}")
+    except Exception as e:
+        messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+
+def edit_song_details():
+    """Edit the selected song's details."""
+    if not tree.selection():
+        return
+        
+    item = tree.selection()[0]
+    song_id = tree.item(item)['values'][0]
+    old_artist = tree.item(item)['values'][1]
+    old_title = tree.item(item)['values'][2]
+    old_filepath = tree.item(item)['values'][3]
+    
+    # Show edit dialog
+    dialog = SongEditDialog(root, old_artist, old_title, old_filepath)
+    root.wait_window(dialog.dialog)
+    
+    # If user clicked Save and provided new details
+    if dialog.result:
+        try:
+            # Connect to database
+            conn = sqlite3.connect(get_db_path())
+            cursor = conn.cursor()
+            
+            # Update the database
+            cursor.execute("""
+                UPDATE dbsongs 
+                SET artist = ?, title = ?, path = ?
+                WHERE songid = ?
+            """, (dialog.result['artist'], dialog.result['title'], dialog.result['filepath'], song_id))
+            
+            conn.commit()
+            conn.close()
+            
+            # Update the treeview
+            tree.item(item, values=(
+                song_id,
+                dialog.result['artist'],
+                dialog.result['title'],
+                dialog.result['filepath']
+            ))
+            
+            insertLog(f"Updated song details for ID {song_id}")
+            
+        except sqlite3.Error as e:
+            error_msg = f"Database error: {str(e)}"
+            insertLog(error_msg)
+            messagebox.showerror("Error", error_msg)
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            insertLog(error_msg)
+            messagebox.showerror("Error", error_msg)
+
+def delete_song():
+    """Delete the selected song from the database."""
+    if not tree.selection():
+        return
+        
+    item = tree.selection()[0]
+    song_id = tree.item(item)['values'][0]
+    artist = tree.item(item)['values'][1]
+    title = tree.item(item)['values'][2]
+    
+    # Show confirmation dialog
+    if not messagebox.askyesno("Confirm Delete", 
+        f"Are you sure you want to delete this song?\n\nArtist: {artist}\nTitle: {title}"):
+        return
+    
+    try:
+        # Connect to database
+        conn = sqlite3.connect(get_db_path())
+        cursor = conn.cursor()
+        
+        # Delete the song
+        cursor.execute("DELETE FROM dbsongs WHERE songid = ?", (song_id,))
+        conn.commit()
+        conn.close()
+        
+        # Remove from treeview
+        tree.delete(item)
+        
+        insertLog(f"Deleted song: {artist} - {title}")
+        
+    except sqlite3.Error as e:
+        error_msg = f"Database error: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+
+def show_db_context_menu(event):
+    """Show the context menu for database entries on right click."""
+    item = tree.identify_row(event.y)
+    if item:
+        tree.selection_set(item)
+        db_context_menu.post(event.x_root, event.y_root)
+
+
+class ConfigDialog:
+    def __init__(self, parent):
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Configuration")
+        self.dialog.transient(parent)  # Make dialog modal
+        self.dialog.grab_set()  # Make dialog modal
+        
+        # Center the dialog on the parent window
+        window_width = 500
+        window_height = 300
+        screen_width = parent.winfo_x() + parent.winfo_width()//2
+        screen_height = parent.winfo_y() + parent.winfo_height()//2
+        x = screen_width - window_width//2
+        y = screen_height - window_height//2
+        self.dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Create and pack the widgets
+        frame = ttk.Frame(self.dialog, padding="10")
+        frame.grid(row=0, column=0, sticky=tk.NSEW)
+        
+        # Folder paths
+        ttk.Label(frame, text="Raw Downloads Folder:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.raw_folder = ttk.Entry(frame, width=50)
+        self.raw_folder.grid(row=0, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.raw_folder.insert(0, RAW_FOLDER)
+        
+        ttk.Label(frame, text="Merged Files Folder:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.merged_folder = ttk.Entry(frame, width=50)
+        self.merged_folder.grid(row=1, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.merged_folder.insert(0, MERGED_FOLDER)
+        
+        # Server URLs
+        ttk.Label(frame, text="Development Server URL:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.server_url = ttk.Entry(frame, width=50)
+        self.server_url.grid(row=2, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.server_url.insert(0, config.get('PATHS', 'SERVER_URL', fallback=''))
+        
+        ttk.Label(frame, text="Production Server URL:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.prod_server_url = ttk.Entry(frame, width=50)
+        self.prod_server_url.grid(row=3, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.prod_server_url.insert(0, config.get('PATHS', 'PROD_SERVER_URL', fallback=''))
+        
+        ttk.Label(frame, text="Development Upload URL:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        self.upload_url = ttk.Entry(frame, width=50)
+        self.upload_url.grid(row=4, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.upload_url.insert(0, config.get('PATHS', 'SERVER_URL_UPLOAD', fallback=''))
+        
+        ttk.Label(frame, text="Production Upload URL:").grid(row=5, column=0, sticky=tk.W, pady=5)
+        self.prod_upload_url = ttk.Entry(frame, width=50)
+        self.prod_upload_url.grid(row=5, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.prod_upload_url.insert(0, config.get('PATHS', 'PROD_SERVER_URL_UPLOAD', fallback=''))
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=6, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Save", command=self.save_config).grid(row=0, column=0, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.dialog.destroy).grid(row=0, column=1, padx=5)
+        
+        # Configure grid weights
+        self.dialog.grid_columnconfigure(0, weight=1)
+        self.dialog.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        
+    def save_config(self):
+        """Save the configuration to config.ini file."""
+        global RAW_FOLDER, MERGED_FOLDER
+        
+        try:
+            # Update config object
+            if not config.has_section('PATHS'):
+                config.add_section('PATHS')
+                
+            config.set('PATHS', 'RAW_FOLDER', self.raw_folder.get())
+            config.set('PATHS', 'MERGED_FOLDER', self.merged_folder.get())
+            config.set('PATHS', 'SERVER_URL', self.server_url.get())
+            config.set('PATHS', 'PROD_SERVER_URL', self.prod_server_url.get())
+            config.set('PATHS', 'SERVER_URL_UPLOAD', self.upload_url.get())
+            config.set('PATHS', 'PROD_SERVER_URL_UPLOAD', self.prod_upload_url.get())
+            
+            # Save to file
+            with open('config.ini', 'w') as configfile:
+                config.write(configfile)
+                
+            # Update global variables
+            RAW_FOLDER = self.raw_folder.get()
+            MERGED_FOLDER = self.merged_folder.get()
+            
+            # Create directories if they don't exist
+            os.makedirs(RAW_FOLDER, exist_ok=True)
+            os.makedirs(MERGED_FOLDER, exist_ok=True)
+            
+            # Reload configuration
+            config.read('config.ini')
+            
+            # Update folder path in file management tab
+            txt_folder.delete(0, tk.END)
+            txt_folder.insert(0, MERGED_FOLDER)
+            refresh_file_list()
+            
+            messagebox.showinfo("Success", "Configuration saved and reloaded successfully!")
+            self.dialog.destroy()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error saving configuration: {str(e)}")
+
+def open_config_dialog():
+    """Open the configuration dialog."""
+    dialog = ConfigDialog(root)
+    root.wait_window(dialog.dialog)
+
+def refresh_file_list():
+    """Refresh the file list in the treeview."""
+    folder_path = txt_folder.get()
+    if not os.path.isdir(folder_path):
+        messagebox.showerror("Error", "Invalid folder path")
+        return
+        
+    # Clear existing items
+    for item in file_tree.get_children():
+        file_tree.delete(item)
+        
+    # Add files to treeview
+    try:
+        files = []
+        for file in os.listdir(folder_path):
+            # Skip hidden files (starting with .)
+            if file.startswith('.'):
+                continue
+                
+            file_path = os.path.join(folder_path, file)
+            if os.path.isfile(file_path):
+                # Get file stats
+                stats = os.stat(file_path)
+                size_bytes = stats.st_size
+                size = f"{size_bytes / 1024 / 1024:.2f} MB"
+                modified = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stats.st_mtime))
+                
+                # Store the raw values for sorting
+                files.append({
+                    'name': file,
+                    'size_bytes': size_bytes,
+                    'size_display': size,
+                    'modified_timestamp': stats.st_mtime,
+                    'modified_display': modified
+                })
+        
+        # Sort files by name initially
+        files.sort(key=lambda x: x['name'].lower())
+        
+        # Add sorted files to treeview
+        for file_info in files:
+            file_tree.insert('', 'end', values=(
+                file_info['name'],
+                file_info['size_display'],
+                file_info['modified_display']
+            ), tags=(str(file_info['size_bytes']), str(file_info['modified_timestamp'])))
+            
+    except Exception as e:
+        messagebox.showerror("Error", f"Error reading folder: {str(e)}")
+
+def add_songs_to_db():
+    """Add new songs from the file list to the database."""
+    # First check if there are any files in the list
+    if not file_tree.get_children():
+        messagebox.showwarning("Warning", "No files found in the current folder.")
+        return
+        
+    try:
+        # Get the database path
+        db_path = get_db_path()
+        if not os.path.exists(db_path):
+            messagebox.showerror("Error", "Database file not found. Please download the database first.")
+            return
+
+        # Get the folder path
+        folder_path = txt_folder.get()
+        if not os.path.isdir(folder_path):
+            messagebox.showerror("Error", "Invalid folder path")
+            return
+
+        # Call update_karaoke_db from UtilityFunctions
+        update_karaoke_db(folder_path, db_path, insertLog)
+        
+        # Show success message
+        messagebox.showinfo("Success", "Songs have been added to the database.")
+        
+    except Exception as e:
+        error_msg = f"Error adding songs to database: {str(e)}"
+        messagebox.showerror("Error", error_msg)
+        insertLog(error_msg)
+
 # **********************************
 # Create the main application window
 # **********************************
 root = tk.Tk()
 root.title("YouTube Video Downloader")
-# root.geometry("700x400")
-root.configure(bg="#FFFFFF")
 
-frame_poToken = tk.Frame()
-frame_poToken.configure(bg="#FFFFFF")
-frame_poToken.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=10)  # Use grid!
-root.grid_columnconfigure(1, weight=1) # Make column 1 expand horizontally
+style = ttk.Style(root) #initialize style
+style.theme_use('aqua')
+
+# Set background color for all ttk widgets
+bg_color = "#F0F0F0"  # Light gray background that matches ttk default
+style.configure("TNotebook", background=bg_color)
+style.configure("TFrame", background=bg_color)
+style.configure("TLabel", background=bg_color)
+style.configure("TButton", background=bg_color)
+style.configure("Transparent.TLabel", background=bg_color)
+style.map("TNotebook.Tab", background=[("selected", bg_color)])
+
+# Configure Notebook style with border
+style.configure("TNotebook", borderwidth=1)
+style.configure("TNotebook.Tab", padding=[10, 4], font=('Helvetica', '10'))
+style.configure("TFrame", borderwidth=0)  # Remove frame borders
+
+# Create the notebook (tab control)
+notebook = ttk.Notebook(root)
+notebook.grid(row=0, column=0, sticky=tk.NSEW, padx=5, pady=5)
+root.grid_columnconfigure(0, weight=1)
+root.grid_rowconfigure(0, weight=1)
+
+# Create the first tab for existing functionality
+tab_downloader = ttk.Frame(notebook)
+notebook.add(tab_downloader, text='YouTube Downloader')
+
+# Create the second tab for new features
+tab_db_management = ttk.Frame(notebook)
+notebook.add(tab_db_management, text='DB Management')
+
+# Create the third tab for file management
+tab_file_management = ttk.Frame(notebook)
+notebook.add(tab_file_management, text='File Management')
+
+# Configure the file management tab layout
+frame_file_tools = ttk.Frame(tab_file_management)
+frame_file_tools.grid(row=0, column=0, padx=5, pady=5, sticky=tk.EW)
+tab_file_management.grid_columnconfigure(0, weight=1)
+
+# Add file management controls
+lbl_folder = ttk.Label(frame_file_tools, text="Folder:")
+lbl_folder.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+
+txt_folder = ttk.Entry(frame_file_tools)
+txt_folder.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
+txt_folder.insert(0, MERGED_FOLDER)  # Set default folder
+frame_file_tools.grid_columnconfigure(1, weight=1)
+
+btn_browse = ttk.Button(frame_file_tools, text="Browse")
+btn_browse.grid(row=0, column=2, padx=5, pady=5)
+
+btn_refresh = ttk.Button(frame_file_tools, text="Refresh", command=refresh_file_list)
+btn_refresh.grid(row=0, column=3, padx=5, pady=5)
+
+# Create frame for file list
+frame_file_list = ttk.Frame(tab_file_management)
+frame_file_list.grid(row=1, column=0, padx=5, pady=5, sticky=tk.NSEW)
+tab_file_management.grid_rowconfigure(1, weight=1)
+
+# Add Treeview for files
+file_columns = ("Name", "Size", "Modified")
+file_tree = ttk.Treeview(frame_file_list, columns=file_columns, show='headings')
+
+# Define column headings
+file_tree.heading('Name', text='Name')
+file_tree.heading('Size', text='Size')
+file_tree.heading('Modified', text='Modified')
+
+# Configure column widths
+file_tree.column('Name', width=300)
+file_tree.column('Size', width=100)
+file_tree.column('Modified', width=150)
+
+# Add scrollbars for file tree
+file_vsb = ttk.Scrollbar(frame_file_list, orient="vertical", command=file_tree.yview)
+file_hsb = ttk.Scrollbar(frame_file_list, orient="horizontal", command=file_tree.xview)
+file_tree.configure(yscrollcommand=file_vsb.set, xscrollcommand=file_hsb.set)
+
+# Grid layout for treeview and scrollbars
+file_tree.grid(row=0, column=0, sticky=tk.NSEW)
+file_vsb.grid(row=0, column=1, sticky=tk.NS)
+file_hsb.grid(row=1, column=0, sticky=tk.EW)
+
+# Add button frame below treeview
+frame_file_buttons = ttk.Frame(frame_file_list)
+frame_file_buttons.grid(row=2, column=0, columnspan=2, pady=5, sticky=tk.EW)
+
+# Add "Add New Songs to DB" button
+btn_add_to_db = ttk.Button(frame_file_buttons, text="Add New Songs to DB", command=lambda: add_songs_to_db())
+btn_add_to_db.pack(side=tk.TOP, anchor=tk.CENTER)
+
+frame_file_list.grid_rowconfigure(0, weight=1)
+frame_file_list.grid_columnconfigure(0, weight=1)
+
+def show_file_context_menu(event):
+    """Show the context menu on right click."""
+    item = file_tree.identify_row(event.y)
+    if item:
+        file_tree.selection_set(item)
+        file_context_menu.post(event.x_root, event.y_root)
+
+def rename_selected_file():
+    """Rename the selected file in the treeview."""
+    if not file_tree.selection():
+        return
+        
+    item = file_tree.selection()[0]
+    old_filename = file_tree.item(item)['values'][0]
+    folder_path = txt_folder.get()
+    old_filepath = os.path.join(folder_path, old_filename)
+    
+    # Show rename dialog
+    dialog = FileRenameDialog(root, old_filename)
+    root.wait_window(dialog.dialog)
+    
+    # If user clicked Save and provided a new name
+    if dialog.result and dialog.result != old_filename:
+        try:
+            new_filepath = os.path.join(folder_path, dialog.result)
+            
+            # Check if target file already exists
+            if os.path.exists(new_filepath):
+                if not messagebox.askyesno("File Exists", 
+                    f"File '{dialog.result}' already exists. Do you want to overwrite it?"):
+                    return
+            
+            # Rename the file
+            os.rename(old_filepath, new_filepath)
+            
+            # Update the treeview
+            stats = os.stat(new_filepath)
+            size = f"{stats.st_size / 1024 / 1024:.2f} MB"
+            modified = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stats.st_mtime))
+            
+            file_tree.item(item, values=(
+                dialog.result,
+                size,
+                modified
+            ), tags=(str(stats.st_size), str(stats.st_mtime)))
+            
+            insertLog(f"Renamed '{old_filename}' to '{dialog.result}'")
+            
+        except OSError as e:
+            error_msg = f"Error renaming file: {str(e)}"
+            insertLog(error_msg)
+            messagebox.showerror("Error", error_msg)
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            insertLog(error_msg)
+            messagebox.showerror("Error", error_msg)
+
+def open_selected_file():
+    """Open the selected file using the default system application."""
+    if not file_tree.selection():
+        return
+        
+    item = file_tree.selection()[0]
+    filename = file_tree.item(item)['values'][0]
+    folder_path = txt_folder.get()
+    filepath = os.path.join(folder_path, filename)
+    
+    try:
+        if sys.platform == "darwin":  # macOS
+            subprocess.run(["open", filepath])
+        elif sys.platform == "win32":  # Windows
+            os.startfile(filepath)
+        elif sys.platform.startswith("linux"):  # Linux
+            subprocess.run(["xdg-open", filepath])
+        else:
+            insertLog("Unsupported operating system for opening files.")
+    except Exception as e:
+        error_msg = f"Error opening file: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+
+def delete_selected_file():
+    """Delete the selected file from the filesystem."""
+    if not file_tree.selection():
+        return
+        
+    item = file_tree.selection()[0]
+    filename = file_tree.item(item)['values'][0]
+    folder_path = txt_folder.get()
+    filepath = os.path.join(folder_path, filename)
+    
+    # Show confirmation dialog
+    if not messagebox.askyesno("Confirm Delete", 
+        f"Are you sure you want to delete this file?\n\n{filename}"):
+        return
+    
+    try:
+        # Delete the file
+        os.remove(filepath)
+        
+        # Remove from treeview
+        file_tree.delete(item)
+        
+        insertLog(f"Deleted file '{filename}'")
+        
+    except OSError as e:
+        error_msg = f"Error deleting file: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+
+# Create context menu for file management
+file_context_menu = tk.Menu(file_tree, tearoff=0)
+file_context_menu.add_command(label="Open", command=open_selected_file)
+file_context_menu.add_command(label="Rename", command=rename_selected_file)
+file_context_menu.add_separator()
+file_context_menu.add_command(label="Delete", command=delete_selected_file)
+
+# Bind right-click event to show context menu
+file_tree.bind('<Button-3>', show_file_context_menu)  # For Windows/Linux
+file_tree.bind('<Button-2>', show_file_context_menu)  # For macOS
+
+class FileRenameDialog:
+    def __init__(self, parent, old_filename):
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Rename File")
+        self.dialog.transient(parent)  # Make dialog modal
+        self.dialog.grab_set()  # Make dialog modal
+        
+        # Center the dialog on the parent window
+        window_width = 400
+        window_height = 120
+        screen_width = parent.winfo_x() + parent.winfo_width()//2
+        screen_height = parent.winfo_y() + parent.winfo_height()//2
+        x = screen_width - window_width//2
+        y = screen_height - window_height//2
+        self.dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Create and pack the widgets
+        frame = ttk.Frame(self.dialog, padding="10")
+        frame.grid(row=0, column=0, sticky=tk.NSEW)
+        
+        # Add filename entry
+        ttk.Label(frame, text="New filename:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.entry_filename = ttk.Entry(frame, width=50)
+        self.entry_filename.grid(row=0, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.entry_filename.insert(0, old_filename)
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=1, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Save", command=self.save).grid(row=0, column=0, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.cancel).grid(row=0, column=1, padx=5)
+        
+        # Configure grid weights
+        self.dialog.grid_columnconfigure(0, weight=1)
+        self.dialog.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        
+        # Store the result
+        self.result = None
+        
+    def save(self):
+        """Save the new filename and close the dialog."""
+        self.result = self.entry_filename.get()
+        self.dialog.destroy()
+        
+    def cancel(self):
+        """Cancel the rename operation."""
+        self.dialog.destroy()
+
+def sort_treeview(col):
+    """Sort treeview when a column header is clicked."""
+    # Get all items in the treeview
+    items = [(file_tree.set(item, col), item) for item in file_tree.get_children('')]
+    
+    # Determine sort order
+    reverse = False
+    if hasattr(file_tree, '_sort_col') and file_tree._sort_col == col:
+        reverse = not file_tree._sort_reverse
+    file_tree._sort_col = col
+    file_tree._sort_reverse = reverse
+    
+    # Sort items based on column
+    if col == 'Size':
+        # Sort by actual size in bytes (stored in tags)
+        items = [(float(file_tree.item(item)['tags'][0]), item) for item in file_tree.get_children('')]
+    elif col == 'Modified':
+        # Sort by timestamp (stored in tags)
+        items = [(float(file_tree.item(item)['tags'][1]), item) for item in file_tree.get_children('')]
+    else:
+        # Sort by string value for name
+        items = [(file_tree.set(item, col).lower(), item) for item in file_tree.get_children('')]
+    
+    # Sort the items
+    items.sort(reverse=reverse)
+    
+    # Move items in the sorted order
+    for idx, (val, item) in enumerate(items):
+        file_tree.move(item, '', idx)
+    
+    # Update column header
+    for header in ['Name', 'Size', 'Modified']:
+        if header == col:
+            file_tree.heading(header, text=f"{header} {'↓' if reverse else '↑'}")
+        else:
+            file_tree.heading(header, text=header)
+
+# Bind column headers to sorting function
+file_tree.heading('Name', text='Name', command=lambda: sort_treeview('Name'))
+file_tree.heading('Size', text='Size', command=lambda: sort_treeview('Size'))
+file_tree.heading('Modified', text='Modified', command=lambda: sort_treeview('Modified'))
+
+# Initial file list population
+refresh_file_list()
+
+# Add YouTube Downloader tab contents
+frame_poToken = ttk.Frame(tab_downloader)
+frame_poToken.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=10)
+tab_downloader.grid_columnconfigure(1, weight=1)
 
 # add visitor, poToken
-lbl_visitor = tk.Label(frame_poToken, text="visitor")
+lbl_visitor = ttk.Label(frame_poToken, text="visitor")
 lbl_visitor.grid(row=0,column=0, sticky=tk.W)
 
-txt_visitor = tk.Entry(frame_poToken, width=55)
+txt_visitor = ttk.Entry(frame_poToken, width=55)
 txt_visitor.insert(tk.END, VISITOR_DATA)
 txt_visitor.grid(row=0,column=1, columnspan=3)
 
-lbl_poToken = tk.Label(frame_poToken, text="poToken")
+lbl_poToken = ttk.Label(frame_poToken, text="poToken")
 lbl_poToken.grid(row=1,column=0, sticky=tk.W)
 
-txt_poToken = tk.Entry(frame_poToken, width=55)
+txt_poToken = ttk.Entry(frame_poToken, width=55)
 txt_poToken.insert(tk.END,PO_TOKEN)
 txt_poToken.grid(row=1,column=1, columnspan=3)
 
-frame = tk.Frame()
-frame.configure(bg="#FFFFFF")
-frame.grid(row=1, column=0, padx=5, pady=10, sticky=tk.NSEW)  # Use grid, sticky for resizing
+frame = ttk.Frame(tab_downloader)
+frame.grid(row=1, column=0, padx=5, pady=10, sticky=tk.NSEW)
 
-root.grid_rowconfigure(1, weight=1)  # Make row 1 (the frame) expand vertically
-root.grid_columnconfigure(0, weight=1) # Make column 0 expand horizontally
+tab_downloader.grid_rowconfigure(1, weight=1)
+tab_downloader.grid_columnconfigure(0, weight=1)
 
 # Label and Entry for the YouTube URL
-url_label = tk.Label(frame, text="YouTube Vid")
+url_label = ttk.Label(frame, text="YouTube Vid")
 url_label.grid(row=0, column=0, padx=2, pady=5, sticky=tk.W)
 
-# txturl = tk.Entry(frame, width=50)
-# txturl.grid(row=0, column=1, padx=2, pady=5)
 cboURL = ttk.Combobox(frame)
-cboURL.grid(row=0, column=1, padx=2, pady=5, sticky=tk.EW) # Sticky East-West
+cboURL.grid(row=0, column=1, padx=2, pady=5, sticky=tk.EW)
 
 # New Button (before download_button)
-btnRefreshTabs = tk.Button(frame, text="..", command=check_and_run_chrome)  
-btnRefreshTabs.grid(row=0, column=2, padx=2, pady=5)  # Place before Download
+btnRefreshTabs = ttk.Button(frame, text="..", command=check_and_run_chrome)
+btnRefreshTabs.grid(row=0, column=2, padx=2, pady=5)
 
 # Button to start the download
-download_button = tk.Button(frame, text="Download", command=start_download)
+download_button = ttk.Button(frame, text="Download", command=start_download)
 download_button.grid(row=0, column=3, padx=2, pady=5)
 
-frame.grid_rowconfigure(1, weight=1)  # Make row 1 (txtLogs) expand vertically
-# frame.grid_columnconfigure(0, weight=1)  # Make column 0 expand horizontally
-frame.grid_columnconfigure(1, weight=1)  # Make column 1 expand horizontally
-# frame.grid_columnconfigure(2, weight=1)  # Make column 2 expand horizontally
+frame.grid_rowconfigure(1, weight=1)
+frame.grid_columnconfigure(1, weight=1)
 
 # Multiline Textbox for progress updates
 txtLogs = scrolledtext.ScrolledText(frame, wrap=tk.WORD)
@@ -656,42 +1390,198 @@ txtLogs.grid(row=1, column=0, columnspan=4, pady=5, sticky=tk.NSEW)
 txtLogs.configure(state=tk.DISABLED)
 
 # Frame for buttons below the logs
-frame_btn = tk.Frame(root, bg="#FFFFFF")
-frame_btn.grid(row=2, column=0, sticky=tk.EW, pady=10) # Grid it!
-root.grid_rowconfigure(2, weight=0) # Row 2 should not resize
+frame_btn = ttk.Frame(tab_downloader)
+frame_btn.grid(row=2, column=0, sticky=tk.EW, pady=10)
+tab_downloader.grid_rowconfigure(2, weight=0)
 
-# Add empty columns on both sides to center the buttons
-frame_btn.grid_columnconfigure(0, weight=1)  # Empty column on the left
-frame_btn.grid_columnconfigure(3, weight=1)  # Empty column on the right
+frame_btn.grid_columnconfigure(0, weight=1)  # Left spacing
+frame_btn.grid_columnconfigure(4, weight=1)  # Right spacing
 
-btnListFiles = tk.Button(frame_btn, text="Downloaded Files", command=list_files_in_directory)
-btnListFiles.grid(row=0, column=1, sticky=tk.S)
-# btnListFiles.pack(side=tk.TOP, anchor=tk.CENTER)  # Center the button
+# Add buttons with equal spacing
+btnListFiles = ttk.Button(frame_btn, text="Downloaded Files", command=list_files_in_directory)
+btnListFiles.grid(row=0, column=1, padx=5)
 
-btn_clear_logs = tk.Button(frame_btn, text="Clear Logs", command=clearLogs)
-btn_clear_logs.grid(row=0, column=2, sticky=tk.S)
-# btn_clear_logs.pack(side=tk.TOP, anchor=tk.CENTER)  # Center the button
+btn_clear_logs = ttk.Button(frame_btn, text="Clear Logs", command=clearLogs)
+btn_clear_logs.grid(row=0, column=2, padx=5)
 
-# Schedule the initialization function to run after the GUI starts
-# insertLog('Getting poToken...')
-# download_button.config(state=tk.DISABLED)
-# root.after(0, get_po_token)
+btn_open_folder = ttk.Button(frame_btn, text="Open Folder", command=open_downloads_folder)
+btn_open_folder.grid(row=0, column=3, padx=5)
 
-root.resizable(width=False, height=False)  # Disable resizing in both directions
+# Add DB Management tab contents
+# Create search frame for database query
+frame_search = ttk.Frame(tab_db_management)
+frame_search.grid(row=0, column=0, padx=5, pady=5, sticky=tk.EW)
+tab_db_management.grid_columnconfigure(0, weight=1)
 
-def set_background(widget, color, widget_types=(tk.Label, tk.Entry, tk.Button, ttk.Combobox)): # Add Combobox
-    if isinstance(widget, widget_types):
-        try:
-            widget.config(bg=color)  # Try 'bg' first
-        except tk.TclError:
-            try:
-                widget.config(background=color)  # Try 'background' if 'bg' fails
-            except tk.TclError:
-                pass  # Ignore if neither works (some widgets might not have bg options)
-    for child in widget.winfo_children():
-        set_background(child, color, widget_types)
+# Add search controls
+lbl_search = ttk.Label(frame_search, text="Search Query:")
+lbl_search.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
 
-set_background(root, "White")
+txt_search = ttk.Entry(frame_search)
+txt_search.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
+frame_search.grid_columnconfigure(1, weight=1)
+
+# Bind Enter key to search function
+txt_search.bind('<Return>', lambda event: search_database())
+
+btn_search = ttk.Button(frame_search, text="Search", command=search_database)
+btn_search.grid(row=0, column=2, padx=5, pady=5)
+
+# Create frame for results
+frame_results = ttk.Frame(tab_db_management)
+frame_results.grid(row=1, column=0, padx=5, pady=5, sticky=tk.NSEW)
+tab_db_management.grid_rowconfigure(1, weight=1)
+
+# Add Treeview for results
+columns = ("ID", "Artist", "Title", "Filepath")
+tree = ttk.Treeview(frame_results, columns=columns, show='headings')
+
+# Define column headings
+tree.heading('ID', text='ID')
+tree.heading('Artist', text='Artist')
+tree.heading('Title', text='Title')
+tree.heading('Filepath', text='Filepath')
+
+# Configure column widths
+tree.column('ID', width=0, stretch=False, minwidth=0)  # Hide ID column
+tree.column('Artist', width=200)
+tree.column('Title', width=300)
+tree.column('Filepath', width=300)  # Increased width for better visibility
+
+# Add scrollbars
+vsb = ttk.Scrollbar(frame_results, orient="vertical", command=tree.yview)
+hsb = ttk.Scrollbar(frame_results, orient="horizontal", command=tree.xview)
+tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+# Grid layout for treeview and scrollbars
+tree.grid(row=0, column=0, sticky=tk.NSEW)
+vsb.grid(row=0, column=1, sticky=tk.NS)
+hsb.grid(row=1, column=0, sticky=tk.EW)
+
+frame_results.grid_rowconfigure(0, weight=1)
+frame_results.grid_columnconfigure(0, weight=1)
+
+# Create context menu for database management
+db_context_menu = tk.Menu(tree, tearoff=0)
+db_context_menu.add_command(label="Edit", command=edit_song_details)
+db_context_menu.add_separator()
+db_context_menu.add_command(label="Delete", command=delete_song)
+
+# Bind right-click event to show context menu
+tree.bind('<Button-3>', show_db_context_menu)  # For Windows/Linux
+tree.bind('<Button-2>', show_db_context_menu)  # For macOS
+
+# Bind double-click event to show edit dialog
+tree.bind('<Double-1>', lambda event: edit_song_details())
+
+# Create frame for database management buttons
+frame_db_buttons = ttk.Frame(tab_db_management)
+frame_db_buttons.grid(row=2, column=0, padx=5, pady=5, sticky=tk.EW)
+
+# Add buttons with equal spacing
+frame_db_buttons.grid_columnconfigure(0, weight=0)  # Changed from 1 to 0 to keep checkbox left-aligned
+frame_db_buttons.grid_columnconfigure(4, weight=1)  # Right spacing
+
+# Add production checkbox
+production_var = tk.BooleanVar()
+chk_production = ttk.Checkbutton(frame_db_buttons, text="Production", variable=production_var)
+chk_production.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+
+# Add Config button to frame_db_buttons
+btn_config = ttk.Button(frame_db_buttons, text="Config", command=open_config_dialog)
+btn_config.grid(row=0, column=1, padx=5, pady=5)
+
+# Download DB button
+btn_download_db = ttk.Button(frame_db_buttons, text="Download DB", command=lambda: download_database())
+btn_download_db.grid(row=0, column=2, padx=5, pady=5)
+
+# Add Upload DB button
+btn_upload_db = ttk.Button(frame_db_buttons, text="Upload DB", command=lambda: upload_database())
+btn_upload_db.grid(row=0, column=3, padx=5, pady=5)
+
+class SongEditDialog:
+    def __init__(self, parent, old_artist, old_title, old_filepath):
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Edit Song Details")
+        self.dialog.transient(parent)  # Make dialog modal
+        self.dialog.grab_set()  # Make dialog modal
+        
+        # Center the dialog on the parent window
+        window_width = 500
+        window_height = 200
+        screen_width = parent.winfo_x() + parent.winfo_width()//2
+        screen_height = parent.winfo_y() + parent.winfo_height()//2
+        x = screen_width - window_width//2
+        y = screen_height - window_height//2
+        self.dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Create and pack the widgets
+        frame = ttk.Frame(self.dialog, padding="10")
+        frame.grid(row=0, column=0, sticky=tk.NSEW)
+        
+        # Add entry fields
+        ttk.Label(frame, text="Artist:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.entry_artist = ttk.Entry(frame, width=50)
+        self.entry_artist.grid(row=0, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.entry_artist.insert(0, old_artist)
+        
+        ttk.Label(frame, text="Title:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.entry_title = ttk.Entry(frame, width=50)
+        self.entry_title.grid(row=1, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.entry_title.insert(0, old_title)
+        
+        ttk.Label(frame, text="Filepath:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.entry_filepath = ttk.Entry(frame, width=50)
+        self.entry_filepath.grid(row=2, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.entry_filepath.insert(0, old_filepath)
+        # Scroll to the end of filepath to show filename
+        self.entry_filepath.xview_moveto(1)
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Fix Case", command=self.fix_case).grid(row=0, column=0, padx=5)
+        ttk.Button(btn_frame, text="Save", command=self.save).grid(row=0, column=1, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.cancel).grid(row=0, column=2, padx=5)
+        
+        # Configure grid weights
+        self.dialog.grid_columnconfigure(0, weight=1)
+        self.dialog.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        
+        # Bind ESC key to close dialog
+        self.dialog.bind('<Escape>', lambda e: self.cancel())
+        
+        # Store the result
+        self.result = None
+        
+    def fix_case(self):
+        """Apply title case to artist and title fields."""
+        artist = self.entry_artist.get()
+        title = self.entry_title.get()
+        
+        # Update the entry fields with title-cased text
+        self.entry_artist.delete(0, tk.END)
+        self.entry_artist.insert(0, to_title_case(artist))
+        
+        self.entry_title.delete(0, tk.END)
+        self.entry_title.insert(0, to_title_case(title))
+        
+    def save(self):
+        """Save the edited details and close the dialog."""
+        self.result = {
+            'artist': self.entry_artist.get(),
+            'title': self.entry_title.get(),
+            'filepath': self.entry_filepath.get()
+        }
+        self.dialog.destroy()
+        
+    def cancel(self):
+        """Cancel the edit operation."""
+        self.dialog.destroy()
+
+root.resizable(width=True, height=True)
+root.geometry("700x600")
 
 # Run the application
 root.mainloop()
