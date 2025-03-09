@@ -5,6 +5,9 @@ from tkinter import ttk
 from tkinter import scrolledtext
 from tkinter import filedialog  # For folder selection dialog
 from tkinter import messagebox
+import cv2
+from PIL import Image, ImageTk
+import pygame  # For video/audio playback
 
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
@@ -986,6 +989,9 @@ def refresh_file_list():
                 file_info['modified_display']
             ), tags=(str(file_info['size_bytes']), str(file_info['modified_timestamp'])))
             
+        # Update file count
+        lbl_file_count.config(text=f"Files: {len(files)}")
+            
     except Exception as e:
         messagebox.showerror("Error", f"Error reading folder: {str(e)}")
 
@@ -1009,8 +1015,96 @@ def add_songs_to_db():
             messagebox.showerror("Error", "Invalid folder path")
             return
 
-        # Call update_karaoke_db from UtilityFunctions
-        update_karaoke_db(folder_path, db_path, insertLog)
+        # Get the selected filename format
+        selected_format = filename_format.get()
+
+        # Get all songs from DB with same folder
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT path FROM dbsongs where path like ? order by path", (f"{folder_path}%",))    
+        rows = cursor.fetchall()
+        data_in_db = sorted([row[0] for row in rows])
+        
+        # Get all files in folder        
+        files_in_folder = get_files_in_directory(folder_path)
+        
+        # Get new files not yet in DB
+        new_files = find_new_files(data_in_db, files_in_folder)
+        
+        # Initialize list to store songs to add
+        songs_to_add = []
+        
+        insertLog(f"New files to add: {len(new_files)}")
+            
+        for file in new_files:
+            filename = os.path.basename(file)
+            filename_no_ext = os.path.splitext(filename)[0]
+            
+            # Count number of hyphens in filename
+            hyphen_count = filename_no_ext.count('-')
+            
+            if hyphen_count == 1:
+                # Parse according to selected format
+                parts = filename_no_ext.split('-', 1)
+                if len(parts) == 2:
+                    if selected_format == "Artist - Title":
+                        artist = parts[0].strip()
+                        title = parts[1].strip()
+                    else:  # Title - Artist
+                        title = parts[0].strip()
+                        artist = parts[1].strip()
+                    
+                    duration = get_video_duration(file)
+                    # insertLog(f'Artist: {artist}, Title: {title}, Duration: {duration}')
+                    songs_to_add.append((artist, title, file, duration))
+                else:
+                    # Show dialog if parsing fails
+                    dialog = ArtistTitleDialog(root, filename)
+                    root.wait_window(dialog.dialog)
+                    
+                    if dialog.result:
+                        duration = get_video_duration(file)
+                        artist = dialog.result['artist']
+                        title = dialog.result['title']
+                        # insertLog(f'Artist: {artist}, Title: {title}, Duration: {duration}')
+                        songs_to_add.append((artist, title, file, duration))
+                    else:
+                        insertLog(f"Skipped file: {filename}")
+            else:
+                # Multiple hyphens or no hyphen, show dialog
+                dialog = ArtistTitleDialog(root, filename)
+                root.wait_window(dialog.dialog)
+                
+                if dialog.result:  # If user entered data and clicked Save
+                    duration = get_video_duration(file)
+                    artist = dialog.result['artist']
+                    title = dialog.result['title']
+                    insertLog(f'Artist: {artist}, Title: {title}, Duration: {duration}')
+                    songs_to_add.append((artist, title, file, duration))
+                else:
+                    insertLog(f"Skipped file: {filename}")
+                
+        if songs_to_add:
+            insertLog('Saving to database...')
+            for i, (artist, title, file, duration) in enumerate(songs_to_add, 1):
+                insertLog(f"Song {i}/{len(songs_to_add)}: Artist: {artist}, Title: {title}, Duration: {duration}")
+            
+            try:
+                # Begin transaction
+                conn.execute("BEGIN TRANSACTION;")
+                
+                # Insert songs into database
+                cursor.executemany("INSERT INTO dbsongs (artist, title, path, duration) VALUES (?, ?, ?, ?);", songs_to_add)
+                
+                # Commit transaction
+                conn.commit()
+                conn.close()
+                insertLog(f"Inserted {len(songs_to_add)} new songs into the database.")
+                
+            except Exception as e:
+                insertLog(f"Error saving to database: {e}")
+                if conn:
+                    conn.close()
         
         # Show success message
         messagebox.showinfo("Success", "Songs have been added to the database.")
@@ -1019,6 +1113,110 @@ def add_songs_to_db():
         error_msg = f"Error adding songs to database: {str(e)}"
         messagebox.showerror("Error", error_msg)
         insertLog(error_msg)
+
+def browse_folder():
+    """Open folder selection dialog and update the folder path."""
+    folder_path = filedialog.askdirectory(initialdir=txt_folder.get())
+    if folder_path:  # If a folder was selected
+        txt_folder.delete(0, tk.END)
+        txt_folder.insert(0, folder_path)
+        refresh_file_list()  # Refresh the file list with the new folder
+
+def preview_video():
+    """Open video preview dialog for the selected file."""
+    if not file_tree.selection():
+        return
+        
+    item = file_tree.selection()[0]
+    filename = file_tree.item(item)['values'][0]
+    folder_path = txt_folder.get()
+    filepath = os.path.join(folder_path, filename)
+    
+    if not filename.lower().endswith(('.mp4', '.avi', '.mkv', '.mov')):
+        messagebox.showwarning("Warning", "Selected file is not a video file.")
+        return
+    
+    try:
+        dialog = VideoPreviewDialog(root, filepath)
+        root.wait_window(dialog.dialog)
+    except Exception as e:
+        error_msg = f"Error previewing video: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+
+class ArtistTitleDialog:
+    def __init__(self, parent, filename):
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Enter Artist and Title")
+        self.dialog.transient(parent)  # Make dialog modal
+        self.dialog.grab_set()  # Make dialog modal
+        
+        # Center the dialog on the parent window
+        window_width = 400
+        window_height = 150
+        screen_width = parent.winfo_x() + parent.winfo_width()//2
+        screen_height = parent.winfo_y() + parent.winfo_height()//2
+        x = screen_width - window_width//2
+        y = screen_height - window_height//2
+        self.dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Create and pack the widgets
+        frame = ttk.Frame(self.dialog, padding="10")
+        frame.grid(row=0, column=0, sticky=tk.NSEW)
+        
+        # Show filename
+        ttk.Label(frame, text="Filename:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        filename_label = ttk.Label(frame, text=filename)
+        filename_label.grid(row=0, column=1, sticky=tk.W, pady=5)
+        
+        # Add entry fields
+        ttk.Label(frame, text="Artist:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.entry_artist = ttk.Entry(frame, width=40)
+        self.entry_artist.grid(row=1, column=1, sticky=tk.EW, pady=5, padx=5)
+        
+        ttk.Label(frame, text="Title:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.entry_title = ttk.Entry(frame, width=40)
+        self.entry_title.grid(row=2, column=1, sticky=tk.EW, pady=5, padx=5)
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Save", command=self.save).grid(row=0, column=0, padx=5)
+        ttk.Button(btn_frame, text="Skip", command=self.skip).grid(row=0, column=1, padx=5)
+        
+        # Configure grid weights
+        self.dialog.grid_columnconfigure(0, weight=1)
+        self.dialog.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        
+        # Store the result
+        self.result = None
+        
+        # Bind Enter key to save
+        self.dialog.bind('<Return>', lambda e: self.save())
+        # Bind Escape key to skip
+        self.dialog.bind('<Escape>', lambda e: self.skip())
+        
+        # Set focus to artist entry
+        self.entry_artist.focus_set()
+        
+    def save(self):
+        """Save the entered details and close the dialog."""
+        artist = self.entry_artist.get().strip()
+        title = self.entry_title.get().strip()
+        
+        if artist and title:  # Only save if both fields are filled
+            self.result = {
+                'artist': artist,
+                'title': title
+            }
+            self.dialog.destroy()
+        else:
+            messagebox.showwarning("Warning", "Please enter both artist and title.")
+            
+    def skip(self):
+        """Skip this file and close the dialog."""
+        self.dialog.destroy()
 
 # **********************************
 # Create the main application window
@@ -1075,7 +1273,7 @@ txt_folder.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
 txt_folder.insert(0, MERGED_FOLDER)  # Set default folder
 frame_file_tools.grid_columnconfigure(1, weight=1)
 
-btn_browse = ttk.Button(frame_file_tools, text="Browse")
+btn_browse = ttk.Button(frame_file_tools, text="Browse", command=browse_folder)
 btn_browse.grid(row=0, column=2, padx=5, pady=5)
 
 btn_refresh = ttk.Button(frame_file_tools, text="Refresh", command=refresh_file_list)
@@ -1097,7 +1295,7 @@ file_tree.heading('Modified', text='Modified')
 
 # Configure column widths
 file_tree.column('Name', width=300)
-file_tree.column('Size', width=100)
+file_tree.column('Size', width=100, anchor='e')  # 'e' for east/right alignment
 file_tree.column('Modified', width=150)
 
 # Add scrollbars for file tree
@@ -1110,11 +1308,23 @@ file_tree.grid(row=0, column=0, sticky=tk.NSEW)
 file_vsb.grid(row=0, column=1, sticky=tk.NS)
 file_hsb.grid(row=1, column=0, sticky=tk.EW)
 
+# Add file count label
+lbl_file_count = ttk.Label(frame_file_list, text="Files: 0")
+lbl_file_count.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5)
+
 # Add button frame below treeview
 frame_file_buttons = ttk.Frame(frame_file_list)
-frame_file_buttons.grid(row=2, column=0, columnspan=2, pady=5, sticky=tk.EW)
+frame_file_buttons.grid(row=3, column=0, columnspan=2, pady=5, sticky=tk.EW)
 
 # Add "Add New Songs to DB" button
+frame_file_format = ttk.Frame(frame_file_buttons)
+frame_file_format.pack(side=tk.TOP, anchor=tk.CENTER, pady=5)
+
+ttk.Label(frame_file_buttons, text="Filename Format:").pack(side=tk.LEFT, padx=5)
+filename_format = ttk.Combobox(frame_file_buttons, values=["Artist - Title", "Title - Artist"], state="readonly", width=20)
+filename_format.pack(side=tk.LEFT, padx=3)
+filename_format.set("Artist - Title")  # Set default value
+
 btn_add_to_db = ttk.Button(frame_file_buttons, text="Add New Songs to DB", command=lambda: add_songs_to_db())
 btn_add_to_db.pack(side=tk.TOP, anchor=tk.CENTER)
 
@@ -1237,6 +1447,7 @@ def delete_selected_file():
 
 # Create context menu for file management
 file_context_menu = tk.Menu(file_tree, tearoff=0)
+file_context_menu.add_command(label="Preview", command=preview_video)
 file_context_menu.add_command(label="Open", command=open_selected_file)
 file_context_menu.add_command(label="Rename", command=rename_selected_file)
 file_context_menu.add_separator()
@@ -1580,8 +1791,268 @@ class SongEditDialog:
         """Cancel the edit operation."""
         self.dialog.destroy()
 
+class VideoPreviewDialog:
+    def __init__(self, parent, video_path):
+        # Initialize audio_loaded flag first
+        self.audio_loaded = False
+        
+        # Initialize pygame with a different audio backend
+        pygame.init()
+        pygame.mixer.quit()  # Reset the mixer
+        
+        # Try different audio initialization settings
+        try:
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=4096)
+        except pygame.error:
+            try:
+                # Try alternative settings if the first attempt fails
+                pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=2048)
+            except pygame.error as e:
+                print(f"Could not initialize audio: {e}")
+                messagebox.showwarning("Audio Warning", "Audio playback may not be available.")
+        
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Video Preview")
+        self.dialog.transient(parent)
+        
+        # Set minimum initial size
+        self.dialog.minsize(640, 480)
+        
+        # Set initial window size
+        window_width = 800
+        window_height = 600
+        
+        # Center the dialog on the parent window
+        screen_width = parent.winfo_x() + parent.winfo_width()//2
+        screen_height = parent.winfo_y() + parent.winfo_height()//2
+        x = screen_width - window_width//2
+        y = screen_height - window_height//2
+        self.dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Create video display canvas
+        self.canvas = tk.Canvas(self.dialog, bg='black')
+        self.canvas.pack(expand=True, fill=tk.BOTH)
+        
+        # Create control buttons
+        btn_frame = ttk.Frame(self.dialog)
+        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.btn_play = ttk.Button(btn_frame, text="Play", command=self.toggle_play)
+        self.btn_play.pack(side=tk.LEFT, padx=5)
+        
+        # Add volume slider
+        ttk.Label(btn_frame, text="Volume:").pack(side=tk.LEFT, padx=5)
+        self.volume_scale = ttk.Scale(btn_frame, from_=0, to=100, orient=tk.HORIZONTAL, 
+                                    command=self.update_volume)
+        self.volume_scale.set(50)  # Set default volume to 50%
+        self.volume_scale.pack(side=tk.LEFT, padx=5)
+        
+        self.btn_close = ttk.Button(btn_frame, text="Close", command=self.close)
+        self.btn_close.pack(side=tk.RIGHT, padx=5)
+        
+        # Video handling
+        self.video_path = video_path
+        self.is_playing = False
+        self.after_id = None
+        self.first_play = True
+        
+        # Initialize video capture
+        self.cap = cv2.VideoCapture(video_path)
+        if self.cap.isOpened():
+            # Get video properties
+            self.frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
+            self.frame_delay = int(1000 / self.frame_rate)  # Convert to milliseconds
+            
+            try:
+                # Try to load audio
+                pygame.mixer.music.load(video_path)
+                pygame.mixer.music.set_volume(0.5)  # Set initial volume to 50%
+                self.audio_loaded = True
+                print("Audio loaded successfully")
+            except Exception as e:
+                print(f"Error loading audio: {e}")
+                self.audio_loaded = False
+                messagebox.showwarning("Audio Warning", 
+                    "Could not load audio. Video will play without sound.")
+        
+        # Show first frame
+        self.show_frame()
+        
+        # Bind close event
+        self.dialog.protocol("WM_DELETE_WINDOW", self.close)
+        
+        # Bind resize event
+        self.canvas.bind('<Configure>', self.on_resize)
+    
+    def on_resize(self, event):
+        """Handle window resize events."""
+        if hasattr(self, 'current_frame'):
+            self.update_frame_display(self.current_frame)
+    
+    def update_frame_display(self, frame):
+        """Update the displayed frame with proper scaling."""
+        if frame is None:
+            return
+            
+        # Get current canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Check for valid canvas dimensions
+        if canvas_width <= 0 or canvas_height <= 0:
+            return
+            
+        # Get frame dimensions
+        frame_height, frame_width = frame.shape[:2]
+        
+        # Calculate scaling factor
+        width_scale = canvas_width / frame_width
+        height_scale = canvas_height / frame_height
+        scale = min(width_scale, height_scale)
+        
+        # Calculate new dimensions
+        new_width = max(int(frame_width * scale), 1)
+        new_height = max(int(frame_height * scale), 1)
+        
+        try:
+            # Resize frame
+            frame_resized = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+            
+            # Convert frame from BGR to RGB
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+            
+            # Convert to PhotoImage
+            image = Image.fromarray(frame_rgb)
+            photo = ImageTk.PhotoImage(image=image)
+            
+            # Calculate position to center the frame
+            x = (canvas_width - new_width) // 2
+            y = (canvas_height - new_height) // 2
+            
+            # Update canvas
+            self.canvas.delete("all")
+            self.canvas.create_image(x, y, image=photo, anchor=tk.NW)
+            self.canvas.image = photo  # Keep a reference
+            
+        except cv2.error as e:
+            print(f"OpenCV error during frame resize: {e}")
+        except Exception as e:
+            print(f"Error updating frame display: {e}")
+    
+    def show_frame(self):
+        """Display the current video frame."""
+        if not self.cap.isOpened():
+            return
+            
+        ret, frame = self.cap.read()
+        if ret:
+            self.current_frame = frame
+            self.update_frame_display(frame)
+            
+            if self.is_playing:
+                self.after_id = self.dialog.after(self.frame_delay, self.show_frame)
+        else:
+            # Reset video to start when it reaches the end
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            if self.is_playing:
+                if self.audio_loaded:
+                    try:
+                        pygame.mixer.music.play()
+                    except pygame.error as e:
+                        print(f"Error restarting audio: {e}")
+                        self.audio_loaded = False
+                self.show_frame()
+    
+    def toggle_play(self):
+        """Toggle between play and pause."""
+        self.is_playing = not self.is_playing
+        self.btn_play.configure(text="Pause" if self.is_playing else "Play")
+        
+        if self.is_playing:
+            if self.audio_loaded:
+                if self.first_play:
+                    try:
+                        pygame.mixer.music.play()
+                        self.first_play = False
+                    except pygame.error as e:
+                        print(f"Error playing audio: {e}")
+                        self.audio_loaded = False
+                else:
+                    try:
+                        pygame.mixer.music.unpause()
+                    except pygame.error as e:
+                        print(f"Error unpausing audio: {e}")
+                        self.audio_loaded = False
+            self.show_frame()
+        else:
+            if self.audio_loaded:
+                try:
+                    pygame.mixer.music.pause()
+                except pygame.error as e:
+                    print(f"Error pausing audio: {e}")
+                    self.audio_loaded = False
+            if self.after_id:
+                self.dialog.after_cancel(self.after_id)
+    
+    def update_volume(self, value):
+        """Update the audio volume."""
+        if self.audio_loaded:
+            try:
+                volume = float(value) / 100
+                pygame.mixer.music.set_volume(volume)
+            except pygame.error as e:
+                print(f"Error updating volume: {e}")
+                self.audio_loaded = False
+    
+    def close(self):
+        """Clean up resources and close the dialog."""
+        if self.after_id:
+            self.dialog.after_cancel(self.after_id)
+        if self.cap.isOpened():
+            self.cap.release()
+        if self.audio_loaded:
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.quit()
+            except pygame.error as e:
+                print(f"Error cleaning up audio: {e}")
+        pygame.quit()
+        self.dialog.destroy()
+
+def preview_video():
+    """Open video preview dialog for the selected file."""
+    if not file_tree.selection():
+        return
+        
+    item = file_tree.selection()[0]
+    filename = file_tree.item(item)['values'][0]
+    folder_path = txt_folder.get()
+    filepath = os.path.join(folder_path, filename)
+    
+    if not filename.lower().endswith(('.mp4', '.avi', '.mkv', '.mov')):
+        messagebox.showwarning("Warning", "Selected file is not a video file.")
+        return
+    
+    try:
+        dialog = VideoPreviewDialog(root, filepath)
+        root.wait_window(dialog.dialog)
+    except Exception as e:
+        error_msg = f"Error previewing video: {str(e)}"
+        insertLog(error_msg)
+        messagebox.showerror("Error", error_msg)
+
+
 root.resizable(width=True, height=True)
 root.geometry("700x600")
+
+# Center the window on the screen
+window_width = 700
+window_height = 600
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+x = (screen_width - window_width) // 2
+y = (screen_height - window_height) // 2
+root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
 # Run the application
 root.mainloop()

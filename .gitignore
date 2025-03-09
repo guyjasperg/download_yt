@@ -5,6 +5,7 @@
 /DOWNLOADS
 /NEW_SONGS
 /__pycache__
-
+mydatabase.sqlite
+mydatabase.sqlite.backup
 
 /.venv
