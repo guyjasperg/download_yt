@@ -449,7 +449,8 @@ def test_function():
 
 # Function to list files in a directory
 def list_files_in_directory():
-    insertLog(f'Listing files in {MERGED_FOLDER} folder.')
+    insertLog(f'Listing files in\n[{MERGED_FOLDER}]\nfolder.')
+    insertLog('------------------')        
     try:
         # List all files in the directory
         files = [f for f in os.listdir(MERGED_FOLDER) if os.path.isfile(os.path.join(MERGED_FOLDER, f))]
@@ -841,11 +842,11 @@ class ConfigDialog:
         
         # Center the dialog on the parent window
         window_width = 500
-        window_height = 300
-        screen_width = parent.winfo_x() + parent.winfo_width()//2
-        screen_height = parent.winfo_y() + parent.winfo_height()//2
-        x = screen_width - window_width//2
-        y = screen_height - window_height//2
+        window_height = 350  # Increased height to accommodate new entry
+        screen_width = parent.winfo_x() + parent.winfo_width() // 2
+        screen_height = parent.winfo_y() + parent.winfo_height() // 2
+        x = screen_width - window_width // 2
+        y = screen_height - window_height // 2
         self.dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
         # Create and pack the widgets
@@ -863,30 +864,36 @@ class ConfigDialog:
         self.merged_folder.grid(row=1, column=1, sticky=tk.EW, pady=5, padx=5)
         self.merged_folder.insert(0, MERGED_FOLDER)
         
+        # Database path
+        ttk.Label(frame, text="Database Path:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.database_path = ttk.Entry(frame, width=50)
+        self.database_path.grid(row=2, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.database_path.insert(0, config.get('PATHS', 'DATABASE_PATH', fallback='mydatabase.sqlite'))
+        
         # Server URLs
-        ttk.Label(frame, text="Development Server URL:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="Development Server URL:").grid(row=3, column=0, sticky=tk.W, pady=5)
         self.server_url = ttk.Entry(frame, width=50)
-        self.server_url.grid(row=2, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.server_url.grid(row=3, column=1, sticky=tk.EW, pady=5, padx=5)
         self.server_url.insert(0, config.get('PATHS', 'SERVER_URL', fallback=''))
         
-        ttk.Label(frame, text="Production Server URL:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="Production Server URL:").grid(row=4, column=0, sticky=tk.W, pady=5)
         self.prod_server_url = ttk.Entry(frame, width=50)
-        self.prod_server_url.grid(row=3, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.prod_server_url.grid(row=4, column=1, sticky=tk.EW, pady=5, padx=5)
         self.prod_server_url.insert(0, config.get('PATHS', 'PROD_SERVER_URL', fallback=''))
         
-        ttk.Label(frame, text="Development Upload URL:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="Development Upload URL:").grid(row=5, column=0, sticky=tk.W, pady=5)
         self.upload_url = ttk.Entry(frame, width=50)
-        self.upload_url.grid(row=4, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.upload_url.grid(row=5, column=1, sticky=tk.EW, pady=5, padx=5)
         self.upload_url.insert(0, config.get('PATHS', 'SERVER_URL_UPLOAD', fallback=''))
         
-        ttk.Label(frame, text="Production Upload URL:").grid(row=5, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="Production Upload URL:").grid(row=6, column=0, sticky=tk.W, pady=5)
         self.prod_upload_url = ttk.Entry(frame, width=50)
-        self.prod_upload_url.grid(row=5, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.prod_upload_url.grid(row=6, column=1, sticky=tk.EW, pady=5, padx=5)
         self.prod_upload_url.insert(0, config.get('PATHS', 'PROD_SERVER_URL_UPLOAD', fallback=''))
         
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=6, column=0, columnspan=2, pady=10)
+        btn_frame.grid(row=7, column=0, columnspan=2, pady=10)
         ttk.Button(btn_frame, text="Save", command=self.save_config).grid(row=0, column=0, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.dialog.destroy).grid(row=0, column=1, padx=5)
         
@@ -906,6 +913,7 @@ class ConfigDialog:
                 
             config.set('PATHS', 'RAW_FOLDER', self.raw_folder.get())
             config.set('PATHS', 'MERGED_FOLDER', self.merged_folder.get())
+            config.set('PATHS', 'DATABASE_PATH', self.database_path.get())
             config.set('PATHS', 'SERVER_URL', self.server_url.get())
             config.set('PATHS', 'PROD_SERVER_URL', self.prod_server_url.get())
             config.set('PATHS', 'SERVER_URL_UPLOAD', self.upload_url.get())
