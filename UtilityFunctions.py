@@ -141,6 +141,7 @@ keywords_to_remove = [
     "in the style of ",
     "piano version",
     "acoustic instrumental",
+    "Instrumental"
     ]
 
 def remove_keywords(filename, keywords=None):
@@ -154,7 +155,7 @@ def remove_keywords(filename, keywords=None):
     keywordtoremove = keywords_to_remove if keywords == [] else keywords
 
     # clean invalid characters first
-    invalid_chars = ['(', ')', '[', ']','{','}', '*', '_', '|', '/', '🎤', '🎵','♫','♪']
+    invalid_chars = ['(', ')', '[', ']','{','}', '*', '_', '|', '/','+', '🎤', '🎵','♫','♪']
     for char in invalid_chars:
         new_name = new_name.replace(char, ' ')
     
@@ -883,5 +884,5 @@ if __name__ == "__main__":
             case _ if args.get_none_mp4:
                 get_all_none_mp4(args.directory)
             case _ if args.clean_filename:
-                remove_keywords('The Police - Message in a Bottle -.mp4')
+                remove_keywords('Splender Yeah, Whatever + Instrumental.mp4')
 

@@ -8,18 +8,19 @@ from tkinter import messagebox
 import cv2
 from PIL import Image, ImageTk
 import pygame  # For video/audio playback
+from pynput import keyboard
 
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
 from UtilityFunctions import *
 import pychrome, html
-import os, subprocess, threading, queue
+import os, subprocess, threading, queue, platform
 import json  # For parsing JSON
 import sys
 import time
 import configparser
+
 import requests
-import shutil
 import sqlite3
 
 # Read settings from config.ini file
@@ -56,9 +57,11 @@ message_queue = queue.Queue()
 # Make sure temp folders exists
 if not os.path.isdir(RAW_FOLDER):
     os.mkdir(RAW_FOLDER)
-        
 if not os.path.isdir(MERGED_FOLDER):
     os.mkdir(MERGED_FOLDER)
+
+# Shared event to signal the listener to stop
+stop_event = threading.Event()
 
 def get_po_token_thread():
     message_queue.put('+get_po_token')
@@ -207,12 +210,15 @@ def process_queue():
     if is_downloading:
         root.after(50, process_queue)  # Check the queue again after 100ms
         
-def start_download_thread(url, tab_id):
+def start_download_thread(bDownloadAll, url, tab_id):
     global video_filename
     global audio_filename
     global yt
     global is_downloading
     global PO_TOKEN, VISITOR_DATA
+    
+    
+    
     
     try:
         try:
@@ -225,6 +231,7 @@ def start_download_thread(url, tab_id):
             # yt = YouTube(url,'WEB', po_token=PO_TOKEN, on_progress_callback=on_progress )
         except Exception as e:
             message_queue.put(f"ERROR: An error occurred: {e}")
+            is_downloading = False
             return
         
         # continue
@@ -277,6 +284,7 @@ def start_download_thread(url, tab_id):
         # message_queue.put("\nDownloading files...")       
         if Downloadfiles(selectedVideoStream, selectedAudioStream) == False:
             message_queue.put('Download failed.')
+            is_downloading = False
             return
         
         # successful download, proceed processing
@@ -290,6 +298,7 @@ def start_download_thread(url, tab_id):
 
             if os.path.isfile(output_file):
                 message_queue.put("File already exists!")
+                is_downloading = False
                 return
             
             command = [
@@ -327,38 +336,80 @@ def start_download_thread(url, tab_id):
 def start_download():
     global is_downloading
 
-    # Find the URL corresponding to the selected title (linear search, could be optimized if needed)
-    selected_title = cboURL.get()
-    selected_url = selected_title
-    tab_id = ""
-    if len(cboURL.cget('values')) > 0:
-        for url, title in url_title_map.items():
-            if title == selected_title:
-                selected_url = url
-                break  # Stop searching once found
-        tab_id = selected_title.split('|')[1].strip()
-    print(f"Selected URL: {selected_url}, tab_id: {tab_id}")        
-    
-    # check if there is valid input
-    url = selected_url
-    if url:
+    # Ask the user if they want to download all entries from the combo box
+    # use url_title_map to get all the urls
+    url_count = len(url_title_map)
+    download_all = False
+    if url_count > 1:
+        download_all = messagebox.askyesno(
+            "Download All?",
+            "Do you want to download all entries from the combo box?"
+        )
+
+    if url_count > 1 and download_all:
         clearLogs()
         
-        insertLog(f'YT url: {url}')
-        
-        # Set the downloading flag
-        is_downloading = True
-        
-        # Run the download in a separate thread
-        threading.Thread(target=start_download_thread, args=(url,tab_id,), daemon=True).start()
-                
-        # Start processing the queue
-        process_queue()
-
         # disable button to prevent disrupting current process
         download_button.config(state=tk.DISABLED)
+        
+        ctr = 0
+        for url, title in url_title_map.items():
+            ctr += 1
+            yt_title = title.split('|')[0].strip()
+            tab_id = title.split('|')[1].strip()
+            insertLog(f"Downloading {ctr} of {url_count}")
+            insertLog("----------------------------")
+            insertLog(f"{yt_title}")
+            insertLog(f"{url}")
+            
+            is_downloading = True
+            
+            # Run the download in a separate thread
+            threading.Thread(target=start_download_thread, args=(True,url,tab_id), daemon=True).start()
+
+            # wait for download to finish before proceeding to next download
+            while is_downloading:
+                # root.after(100, process_queue)  # Check the queue again after 100ms
+                process_queue()
+                # root.update_idletasks()  # Ensure the UI updates
+                # time.sleep(0.1)  # Add a small delay to prevent busy-waiting
+
+            # Process next download
+            insertLog("----------------------------\n\n")
     else:
-        insertLog('Please enter YT url to download.')        
+        # single download
+        # Find the URL corresponding to the selected title (linear search, could be optimized if needed)
+        selected_title = cboURL.get()
+        selected_url = selected_title
+        tab_id = ""
+        if len(cboURL.cget('values')) > 0:
+            for url, title in url_title_map.items():
+                if title == selected_title:
+                    selected_url = url
+                    break  # Stop searching once found
+            tab_id = selected_title.split('|')[1].strip()
+        print(f"Selected URL: {selected_url}, tab_id: {tab_id}")        
+        
+        # check if there is valid input
+        url = selected_url
+        if url:
+            clearLogs()
+            
+            insertLog(f'YT url: {url}')
+            
+            # Set the downloading flag
+            is_downloading = True
+            
+            # Run the download in a separate thread
+            threading.Thread(target=start_download_thread, args=(False, url,tab_id,), daemon=True).start()
+                    
+            # Start processing the queue
+            process_queue()
+
+            # disable button to prevent disrupting current process
+            download_button.config(state=tk.DISABLED)
+        else:
+            insertLog('Please enter YT url to download.')        
     
 def insertLog(log):
     txtLogs.configure(state=tk.NORMAL)  # Enable editing
@@ -677,6 +728,10 @@ def search_database():
         # Show message if no results found
         if not tree.get_children():
             messagebox.showinfo("Search Results", "No matching songs found.")
+            root.lift()  # Bring the main window to the front
+            root.focus_force()  # Ensure the main window is focused
+            txt_search.focus_set()
+            txt_search.select_range(0, tk.END)  # Select all text in the search box
 
     except sqlite3.Error as e:
         messagebox.showerror("Database Error", f"Error searching database: {str(e)}")
@@ -1145,8 +1200,9 @@ def preview_video():
         return
     
     try:
-        dialog = VideoPreviewDialog(root, filepath)
-        root.wait_window(dialog.dialog)
+        open_file_with_default_app(filepath)
+        # dialog = VideoPreviewDialog(root, filepath)
+        # root.wait_window(dialog.dialog)
     except Exception as e:
         error_msg = f"Error previewing video: {str(e)}"
         insertLog(error_msg)
@@ -1226,11 +1282,100 @@ class ArtistTitleDialog:
         """Skip this file and close the dialog."""
         self.dialog.destroy()
 
+def activate_tab(index=0):
+    """Handle Command-2 hotkey."""
+    notebook.select(index)
+    # Trigger the <<NotebookTabChanged>> event manually
+    notebook.event_generate("<<NotebookTabChanged>>")
+    # Force the UI to update immediately
+    root.update_idletasks()
+    
+# Global variabl1e to hold the listener object
+keyboard_listener = None
+pressed_keys = set()
+
+def on_press(key):
+    try:
+        if key not in pressed_keys:
+            print(f'Key {key.char} pressed')
+            if key.char == '1' and keyboard.Key.cmd in pressed_keys:
+                root.after(0, lambda: activate_tab(0))
+            elif key.char == '2' and keyboard.Key.cmd in pressed_keys:
+                root.after(0, lambda: activate_tab(1))
+            elif key.char == '3' and keyboard.Key.cmd in pressed_keys:
+                root.after(0, lambda: activate_tab(2))
+            elif key.char == 'q' and keyboard.Key.cmd in pressed_keys:
+                print('Exiting listener...')
+                stop_event.set()
+                return False  # Stop listener
+            
+    except AttributeError:
+        print(f'Special key {key} pressed')
+
+    pressed_keys.add(key)
+    
+def on_release(key):
+    print(f'Key {key} released')
+    
+    if key in pressed_keys:
+        pressed_keys.remove(key)
+
+def start_keyboard_listener():
+    global keyboard_listener
+    keyboard_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    keyboard_listener.start()
+    
+    while not stop_event.is_set():
+        keyboard_listener.join(timeout=0.1)  # Poll the stop event every 0.1 seconds
+
+def open_file_with_default_app(file_path):
+    """
+    Opens the specified file with its default application, handling
+    cross-platform compatibility and common errors.
+
+    Args:
+        file_path (str): The path to the file to open.
+    """
+    try:
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        system = platform.system()
+        if system == "Windows":
+            os.startfile(file_path)  # Simplified for Windows
+        elif system == "Darwin":  # macOS
+            subprocess.run(["open", file_path], check=True)
+        elif system == "Linux":
+            # Use xdg-open, and check if it exists
+            if subprocess.run(["which", "xdg-open"], capture_output=True, check=True).returncode == 0:
+                subprocess.run(["xdg-open", file_path], check=True)
+            else:
+                print("xdg-open is not available.  Please install it, or use your desktop environment's file opener.")
+                sys.exit(1) # exit, because we cannot open the file.
+        else:
+            print(f"Unsupported operating system: {system}")
+            sys.exit(1) # exit, because we cannot open the file.
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"Error opening file: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        sys.exit(1)
+            
 # **********************************
 # Create the main application window
 # **********************************
 root = tk.Tk()
 root.title("YouTube Video Downloader")
+
+#Hotkey bindings
+# root.bind("<Option-1>", lambda e: activate_tab(0))
+# root.bind('<Option-2>', lambda e: activate_tab(1))
+# root.bind('<Option-3>', lambda e: activate_tab(2))
 
 style = ttk.Style(root) #initialize style
 style.theme_use('aqua')
@@ -1249,6 +1394,36 @@ style.configure("TNotebook", borderwidth=1)
 style.configure("TNotebook.Tab", padding=[10, 4], font=('Helvetica', '10'))
 style.configure("TFrame", borderwidth=0)  # Remove frame borders
 
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tipwindow = None
+        self.id = None
+        self.x = self.y = 0
+        self.widget.bind("<Enter>", self.show)
+        self.widget.bind("<Leave>", self.hide)
+
+    def show(self, event):
+        "Display text in tooltip window"
+        self.x = event.x + self.widget.winfo_rootx() + 20
+        self.y = event.y + self.widget.winfo_rooty() + 20
+        if self.tipwindow or not self.text:
+            return
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry("+%d+%d" % (self.x, self.y))
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                         font=("tahoma", "8", "normal"))
+        label.pack(ipadx=4)
+
+    def hide(self, event):
+        tw = self.tipwindow
+        self.tipwindow = None
+        if tw:
+            tw.destroy()
+
 # Create the notebook (tab control)
 notebook = ttk.Notebook(root)
 notebook.grid(row=0, column=0, sticky=tk.NSEW, padx=5, pady=5)
@@ -1266,6 +1441,79 @@ notebook.add(tab_db_management, text='DB Management')
 # Create the third tab for file management
 tab_file_management = ttk.Frame(notebook)
 notebook.add(tab_file_management, text='File Management')
+
+# Create tooltips for each tab
+for i, text in enumerate(["This is the first tab", "This is the second tab", "This is the third tab"]):
+    tab_id = notebook.tabs()[i]
+    tab_header = notebook.nametowidget(tab_id)
+    Tooltip(tab_header, text)
+
+# Add YouTube Downloader tab contents
+frame_poToken = ttk.Frame(tab_downloader)
+frame_poToken.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=10)
+tab_downloader.grid_columnconfigure(1, weight=1)
+
+# add visitor, poToken
+lbl_visitor = ttk.Label(frame_poToken, text="visitor")
+lbl_visitor.grid(row=0,column=0, sticky=tk.W)
+
+txt_visitor = ttk.Entry(frame_poToken, width=55)
+txt_visitor.insert(tk.END, VISITOR_DATA)
+txt_visitor.grid(row=0,column=1, columnspan=3)
+
+lbl_poToken = ttk.Label(frame_poToken, text="poToken")
+lbl_poToken.grid(row=1,column=0, sticky=tk.W)
+
+txt_poToken = ttk.Entry(frame_poToken, width=55)
+txt_poToken.insert(tk.END,PO_TOKEN)
+txt_poToken.grid(row=1,column=1, columnspan=3)
+
+frame = ttk.Frame(tab_downloader)
+frame.grid(row=1, column=0, padx=5, pady=10, sticky=tk.NSEW)
+
+tab_downloader.grid_rowconfigure(1, weight=1)
+tab_downloader.grid_columnconfigure(0, weight=1)
+
+# Label and Entry for the YouTube URL
+url_label = ttk.Label(frame, text="YouTube Vid")
+url_label.grid(row=0, column=0, padx=2, pady=5, sticky=tk.W)
+
+cboURL = ttk.Combobox(frame)
+cboURL.grid(row=0, column=1, padx=2, pady=5, sticky=tk.EW)
+
+# New Button (before download_button)
+btnRefreshTabs = ttk.Button(frame, text="..", command=check_and_run_chrome)
+btnRefreshTabs.grid(row=0, column=2, padx=2, pady=5)
+
+# Button to start the download
+download_button = ttk.Button(frame, text="Download", command=start_download)
+download_button.grid(row=0, column=3, padx=2, pady=5)
+
+frame.grid_rowconfigure(1, weight=1)
+frame.grid_columnconfigure(1, weight=1)
+
+# Multiline Textbox for progress updates
+txtLogs = scrolledtext.ScrolledText(frame, wrap=tk.WORD)
+txtLogs.grid(row=1, column=0, columnspan=4, pady=5, sticky=tk.NSEW)
+txtLogs.configure(state=tk.DISABLED)
+
+# Frame for buttons below the logs
+frame_btn = ttk.Frame(tab_downloader)
+frame_btn.grid(row=2, column=0, sticky=tk.EW, pady=10)
+tab_downloader.grid_rowconfigure(2, weight=0)
+
+frame_btn.grid_columnconfigure(0, weight=1)  # Left spacing
+frame_btn.grid_columnconfigure(4, weight=1)  # Right spacing
+
+# Add buttons with equal spacing
+btnListFiles = ttk.Button(frame_btn, text="Downloaded Files", command=list_files_in_directory)
+btnListFiles.grid(row=0, column=1, padx=5)
+
+btn_clear_logs = ttk.Button(frame_btn, text="Clear Logs", command=clearLogs)
+btn_clear_logs.grid(row=0, column=2, padx=5)
+
+btn_open_folder = ttk.Button(frame_btn, text="Open Folder", command=open_downloads_folder)
+btn_open_folder.grid(row=0, column=3, padx=5)
 
 # Configure the file management tab layout
 frame_file_tools = ttk.Frame(tab_file_management)
@@ -1558,73 +1806,6 @@ file_tree.heading('Modified', text='Modified', command=lambda: sort_treeview('Mo
 
 # Initial file list population
 refresh_file_list()
-
-# Add YouTube Downloader tab contents
-frame_poToken = ttk.Frame(tab_downloader)
-frame_poToken.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=10)
-tab_downloader.grid_columnconfigure(1, weight=1)
-
-# add visitor, poToken
-lbl_visitor = ttk.Label(frame_poToken, text="visitor")
-lbl_visitor.grid(row=0,column=0, sticky=tk.W)
-
-txt_visitor = ttk.Entry(frame_poToken, width=55)
-txt_visitor.insert(tk.END, VISITOR_DATA)
-txt_visitor.grid(row=0,column=1, columnspan=3)
-
-lbl_poToken = ttk.Label(frame_poToken, text="poToken")
-lbl_poToken.grid(row=1,column=0, sticky=tk.W)
-
-txt_poToken = ttk.Entry(frame_poToken, width=55)
-txt_poToken.insert(tk.END,PO_TOKEN)
-txt_poToken.grid(row=1,column=1, columnspan=3)
-
-frame = ttk.Frame(tab_downloader)
-frame.grid(row=1, column=0, padx=5, pady=10, sticky=tk.NSEW)
-
-tab_downloader.grid_rowconfigure(1, weight=1)
-tab_downloader.grid_columnconfigure(0, weight=1)
-
-# Label and Entry for the YouTube URL
-url_label = ttk.Label(frame, text="YouTube Vid")
-url_label.grid(row=0, column=0, padx=2, pady=5, sticky=tk.W)
-
-cboURL = ttk.Combobox(frame)
-cboURL.grid(row=0, column=1, padx=2, pady=5, sticky=tk.EW)
-
-# New Button (before download_button)
-btnRefreshTabs = ttk.Button(frame, text="..", command=check_and_run_chrome)
-btnRefreshTabs.grid(row=0, column=2, padx=2, pady=5)
-
-# Button to start the download
-download_button = ttk.Button(frame, text="Download", command=start_download)
-download_button.grid(row=0, column=3, padx=2, pady=5)
-
-frame.grid_rowconfigure(1, weight=1)
-frame.grid_columnconfigure(1, weight=1)
-
-# Multiline Textbox for progress updates
-txtLogs = scrolledtext.ScrolledText(frame, wrap=tk.WORD)
-txtLogs.grid(row=1, column=0, columnspan=4, pady=5, sticky=tk.NSEW)
-txtLogs.configure(state=tk.DISABLED)
-
-# Frame for buttons below the logs
-frame_btn = ttk.Frame(tab_downloader)
-frame_btn.grid(row=2, column=0, sticky=tk.EW, pady=10)
-tab_downloader.grid_rowconfigure(2, weight=0)
-
-frame_btn.grid_columnconfigure(0, weight=1)  # Left spacing
-frame_btn.grid_columnconfigure(4, weight=1)  # Right spacing
-
-# Add buttons with equal spacing
-btnListFiles = ttk.Button(frame_btn, text="Downloaded Files", command=list_files_in_directory)
-btnListFiles.grid(row=0, column=1, padx=5)
-
-btn_clear_logs = ttk.Button(frame_btn, text="Clear Logs", command=clearLogs)
-btn_clear_logs.grid(row=0, column=2, padx=5)
-
-btn_open_folder = ttk.Button(frame_btn, text="Open Folder", command=open_downloads_folder)
-btn_open_folder.grid(row=0, column=3, padx=5)
 
 # Add DB Management tab contents
 # Create search frame for database query
@@ -2061,6 +2242,22 @@ screen_height = root.winfo_screenheight()
 x = (screen_width - window_width) // 2
 y = (screen_height - window_height) // 2
 root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+# Start the keyboard listener in a separate thread
+keyboard_listener_thread = threading.Thread(target=start_keyboard_listener, daemon=True)
+keyboard_listener_thread.start()
+
+def on_closing():
+    global keyboard_listener
+    # Signal the listener to stop
+    print("Closing application")
+    stop_event.set()
+    if keyboard_listener:
+        print("Stopping keyboard listener")
+        keyboard_listener.stop()
+    root.destroy()
+    
+root.protocol("WM_DELETE_WINDOW", on_closing)
 
 # Run the application
 root.mainloop()
