@@ -217,8 +217,21 @@ def start_download_thread(bDownloadAll, url, tab_id):
     global is_downloading
     global PO_TOKEN, VISITOR_DATA
     
-    
-    
+    if bDownloadAll:
+        # If bDownloadAll is True, iterate over all URLs in url_title_map
+        ctr = 0
+        for url, title in url_title_map.items():
+            ctr += 1
+            message_queue.put(f"Downloading: [{ctr}/{len(url_title_map)}]\n")
+            tab_id = title.split('|')[1].strip() if '|' in title else ""
+            is_downloading = True
+            process_queue()  # Process the queue after each download
+            start_download_thread(False, url, tab_id)  # Call with bDownloadAll=False for each URL
+            message_queue.put("-----------------------------------\n")
+            # is_downloading = False
+        
+        message_queue.put("Done downloading all URLs.")
+        return  # Exit after processing all URLs
     
     try:
         try:
@@ -226,22 +239,22 @@ def start_download_thread(bDownloadAll, url, tab_id):
             
             # modified YouTube class to use po_token paramater            
             # yt = YouTube(url,'WEB', po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress )
-            yt = YouTube(url,use_po_token=True,po_token=PO_TOKEN, on_progress_callback=on_progress )
-            # yt = YouTube(url,'WEB', on_progress_callback=on_progress )
-            # yt = YouTube(url,'WEB', po_token=PO_TOKEN, on_progress_callback=on_progress )
+            # yt = YouTube(url,use_po_token=True,po_token=PO_TOKEN, on_progress_callback=on_progress )
+            # yt = YouTube(url, on_progress_callback=on_progress )
+            yt = YouTube(url, po_token=PO_TOKEN, on_progress_callback=on_progress )
         except Exception as e:
             message_queue.put(f"ERROR: An error occurred: {e}")
-            is_downloading = False
+            if not bDownloadAll:
+                is_downloading = False
             return
         
         # continue
         message_queue.put(f'YT Title: {yt.title}')
-        
         #select highest resolution video
         # Sort streams by resolution in descending order
         selectedVideoStream = None
         sorted_streams = sorted(yt.streams.filter(type="video"), key=lambda s: s.resolution) 
-
+        # message_queue.put(f"Total video streams: {len(sorted_streams)}")
         for stream in sorted_streams:
             if(stream.height >= 360 and stream.subtype == "mp4"):
                 if(selectedVideoStream == None):
@@ -284,7 +297,8 @@ def start_download_thread(bDownloadAll, url, tab_id):
         # message_queue.put("\nDownloading files...")       
         if Downloadfiles(selectedVideoStream, selectedAudioStream) == False:
             message_queue.put('Download failed.')
-            is_downloading = False
+            if not bDownloadAll:
+                is_downloading = False
             return
         
         # successful download, proceed processing
@@ -298,7 +312,8 @@ def start_download_thread(bDownloadAll, url, tab_id):
 
             if os.path.isfile(output_file):
                 message_queue.put("File already exists!")
-                is_downloading = False
+                if not bDownloadAll:
+                    is_downloading = False
                 return
             
             command = [
@@ -331,7 +346,8 @@ def start_download_thread(bDownloadAll, url, tab_id):
     finally:
         # Reset the downloading flag
         message_queue.put('-thread_download_video')
-        is_downloading = False                
+        if not bDownloadAll:
+            is_downloading = False
 
 def start_download():
     global is_downloading
@@ -346,36 +362,28 @@ def start_download():
             "Do you want to download all entries from the combo box?"
         )
 
-    if url_count > 1 and download_all:
+    if url_count > 1 and download_all:        
         clearLogs()
         
         # disable button to prevent disrupting current process
         download_button.config(state=tk.DISABLED)
         
-        ctr = 0
-        for url, title in url_title_map.items():
-            ctr += 1
-            yt_title = title.split('|')[0].strip()
-            tab_id = title.split('|')[1].strip()
-            insertLog(f"Downloading {ctr} of {url_count}")
-            insertLog("----------------------------")
-            insertLog(f"{yt_title}")
-            insertLog(f"{url}")
-            
-            is_downloading = True
-            
-            # Run the download in a separate thread
-            threading.Thread(target=start_download_thread, args=(True,url,tab_id), daemon=True).start()
+        is_downloading = True
+        
+        # Run the download in a separate thread
+        threading.Thread(target=start_download_thread, args=(True,'',''), daemon=True).start()
 
-            # wait for download to finish before proceeding to next download
-            while is_downloading:
-                # root.after(100, process_queue)  # Check the queue again after 100ms
-                process_queue()
-                # root.update_idletasks()  # Ensure the UI updates
-                # time.sleep(0.1)  # Add a small delay to prevent busy-waiting
+        # wait for download to finish before proceeding to next download
+        process_queue()
+        # while is_downloading:
+        #     # root.after(100, process_queue)  # Check the queue again after 100ms
+        #     process_queue()
+        #     # root.update_idletasks()  # Ensure the UI updates
+        #     # time.sleep(0.1)  # Add a small delay to prevent busy-waiting
 
-            # Process next download
-            insertLog("----------------------------\n\n")
+        # # Process next download
+        # insertLog("----------------------------\n\n")
+
     else:
         # single download
         # Find the URL corresponding to the selected title (linear search, could be optimized if needed)
@@ -2244,8 +2252,8 @@ y = (screen_height - window_height) // 2
 root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
 # Start the keyboard listener in a separate thread
-keyboard_listener_thread = threading.Thread(target=start_keyboard_listener, daemon=True)
-keyboard_listener_thread.start()
+# keyboard_listener_thread = threading.Thread(target=start_keyboard_listener, daemon=True)
+# keyboard_listener_thread.start()
 
 def on_closing():
     global keyboard_listener
