@@ -804,13 +804,16 @@ def upload_database():
                 response = requests.post(upload_url, files={'dbFile': f})
                 response.raise_for_status()
 
-            processing_dialog.update_message('Database uploaded successfully!')
+            processing_dialog.update_message('Database uploaded successfully!', SOUND_NOTIF)
             # messagebox.showinfo("Success", "Database uploaded successfully!")
 
-        except requests.exceptions.RequestException as e:
-            messagebox.showerror("Upload Error", f"Error uploading database: {str(e)}")
+        # except requests.exceptions.RequestException as e:
+        #     messagebox.showerror("Upload Error", f"Error uploading database: {str(e)}")
         except Exception as e:
-            messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+            processing_dialog.update_message(f"An unexpected error occurred.", SOUND_ERROR)
+            insertLog(f"URL: {get_upload_url()}")   
+            insertLog(f"Error uploading database: {str(e)}")
+            # messagebox.showerror("Upload Error", f"An unexpected error occurred: {str(e)}")
         finally:
             # Close the processing dialog
             # processing_dialog.close()
@@ -2276,7 +2279,7 @@ class ProcessingDialog:
 
         # Center the dialog on the parent window
         window_width = 300
-        window_height = 150
+        window_height = 110
         screen_width = parent.winfo_screenwidth()
         screen_height = parent.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -2285,20 +2288,30 @@ class ProcessingDialog:
 
         # Add a label to indicate processing
         self.label = ttk.Label(self.dialog, text=message)
-        self.label.pack(pady=20)
+        self.label.pack(pady=5)
+
+        # Add a spinner progress below the text
+        self.spinner = ttk.Progressbar(self.dialog, mode='indeterminate', length=200)
+        self.spinner.pack(pady=5)
+        self.spinner.start(5)  # Start the spinner animation with a faster interval (10ms)
 
         # Add a close button (disabled by default)
         self.close_button = ttk.Button(self.dialog, text="Close", command=self.close, state=tk.DISABLED)
         self.close_button.pack(pady=10)
 
-    def update_message(self, new_message):
+    def update_message(self, new_message, playsound):
         """Update the displayed message."""
         self.label.config(text=new_message)
+        
+        if playsound != "":
+            play_sound(playsound)
 
     def toggle_close_button(self, enable=True):
         """Enable or disable the close button."""
         state = tk.NORMAL if enable else tk.DISABLED
         self.close_button.config(state=state)
+        self.spinner.stop()  # Stop the spinner animation
+        self.spinner.config(mode='determinate', value=100)  # Set progress to 100%
 
     def close(self):
         """Close the processing dialog."""
