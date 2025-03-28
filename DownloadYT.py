@@ -783,28 +783,40 @@ def download_database():
 
 def upload_database():
     """Upload the songs database to the server."""
-    try:
-        upload_url = get_upload_url()
-        if not upload_url:
-            messagebox.showerror("Error", "Upload URL not configured. Please check configuration.")
-            return
+    # Create a processing dialog
+    processing_dialog = ProcessingDialog(root, title="Uploading Database", message="Uploading database, please wait...")
 
-        db_path = get_db_path()
-        if not os.path.exists(db_path):
-            messagebox.showerror("Error", "Database file not found.")
-            return
+    # Run the upload in a separate thread
+    def upload_task():
+        try:
+            upload_url = get_upload_url()
+            if not upload_url:
+                messagebox.showerror("Error", "Upload URL not configured. Please check configuration.")
+                return
 
-        # Upload the database file
-        with open(db_path, 'rb') as f:
-            response = requests.post(upload_url, files={'dbFile': f})
-            response.raise_for_status()
+            db_path = get_db_path()
+            if not os.path.exists(db_path):
+                messagebox.showerror("Error", "Database file not found.")
+                return
 
-        messagebox.showinfo("Success", "Database uploaded successfully!")
+            # Upload the database file
+            with open(db_path, 'rb') as f:
+                response = requests.post(upload_url, files={'dbFile': f})
+                response.raise_for_status()
 
-    except requests.exceptions.RequestException as e:
-        messagebox.showerror("Upload Error", f"Error uploading database: {str(e)}")
-    except Exception as e:
-        messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+            processing_dialog.update_message('Database uploaded successfully!')
+            # messagebox.showinfo("Success", "Database uploaded successfully!")
+
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Upload Error", f"Error uploading database: {str(e)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+        finally:
+            # Close the processing dialog
+            # processing_dialog.close()
+            processing_dialog.toggle_close_button(enable=True)
+
+    threading.Thread(target=upload_task, daemon=True).start()
 
 def edit_song_details():
     """Edit the selected song's details."""
@@ -2253,6 +2265,44 @@ def preview_video():
         insertLog(error_msg)
         messagebox.showerror("Error", error_msg)
 
+class ProcessingDialog:
+    def __init__(self, parent, title="Processing", message="Please wait..."):
+        """Initialize the processing dialog."""
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(title)
+        self.dialog.geometry("300x150")
+        self.dialog.transient(parent)  # Make it modal
+        self.dialog.grab_set()  # Prevent interaction with the main window
+
+        # Center the dialog on the parent window
+        window_width = 300
+        window_height = 150
+        screen_width = parent.winfo_screenwidth()
+        screen_height = parent.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Add a label to indicate processing
+        self.label = ttk.Label(self.dialog, text=message)
+        self.label.pack(pady=20)
+
+        # Add a close button (disabled by default)
+        self.close_button = ttk.Button(self.dialog, text="Close", command=self.close, state=tk.DISABLED)
+        self.close_button.pack(pady=10)
+
+    def update_message(self, new_message):
+        """Update the displayed message."""
+        self.label.config(text=new_message)
+
+    def toggle_close_button(self, enable=True):
+        """Enable or disable the close button."""
+        state = tk.NORMAL if enable else tk.DISABLED
+        self.close_button.config(state=state)
+
+    def close(self):
+        """Close the processing dialog."""
+        self.dialog.destroy()
 
 root.resizable(width=True, height=True)
 root.geometry("700x600")
