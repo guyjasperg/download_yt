@@ -1,1 +1,6 @@
 ./UtilityFunctions.py vid_utils --directory '/Volumes/KINGSTONSSD/_Karaoke/_NEW_SONGS/' --database mydatabase.sqlite --upload --server_url  "http://192.168.1.2:3000/api/upload-db"
+
+pyinstaller --clean --noconfirm --onefile --windowed --add-data "config.ini:." --icon=Youtube-dl.icns DownloadYT.py
+pyinstaller --clean --noconfirm --onedir --windowed --add-data "config.ini:." --icon=Youtube-dl.icns DownloadYT.py
+
+pyinstaller --clean --noconfirm DownloadYT.spec   

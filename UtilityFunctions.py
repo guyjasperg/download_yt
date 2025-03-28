@@ -12,12 +12,14 @@ import sys, threading
 import json
 import requests
 
-SOUND_NOTIF = './Sounds/arpeggio-467.mp3'
-SOUND_ERROR = './Sounds/glitch-notification.mp3'
-SOUND_PROCESS_COMPLETE = './Sounds/hitech-logo.mp3'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SOUND_NOTIF = os.path.join(BASE_DIR, 'Sounds', 'arpeggio-467.mp3')
+SOUND_ERROR = os.path.join(BASE_DIR, 'Sounds', 'glitch-notification.mp3')
+SOUND_PROCESS_COMPLETE = os.path.join(BASE_DIR, 'Sounds', 'hitech-logo.mp3')
 
 # Function to play sound in a separate thread
 def play_sound(file_path):
+    print(f"Playing sound: {file_path}")
     threading.Thread(target=play_sound_threaded, args=(file_path,), daemon=True).start()
 
 def play_sound_threaded(file_path):

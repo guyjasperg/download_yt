@@ -5,7 +5,7 @@ a = Analysis(
     ['DownloadYT.py'],
     pathex=[],
     binaries=[],
-    datas=[('config.ini', '.')],
+    datas=[('config.ini', '.'),('Sounds/*', 'Sounds')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -24,8 +24,11 @@ import requests
 import sqlite3
 
 # Read settings from config.ini file
+# Read settings from config.ini file
 config = configparser.ConfigParser()
-config.read('config.ini')
+config_path = os.path.join(os.path.dirname(__file__), 'config.ini')
+print((config_path))
+config.read(config_path)
 
 RAW_FOLDER = config.get('PATHS', 'RAW_FOLDER') #, fallback='DOWNLOADS/')
 MERGED_FOLDER = config.get('PATHS', 'MERGED_FOLDER') #, fallback='NEW_SONGS/')
@@ -316,8 +319,13 @@ def start_download_thread(bDownloadAll, url, tab_id):
                     is_downloading = False
                 return
             
+            ffmpeg_path = config.get('PATHS', 'FFMPEG_PATH', fallback='') 
+            if ffmpeg_path == '':
+                message_queue.put("FFMPEG_PATH not set in config.ini")
+                ffmpeg_path = 'ffmpeg'
+
             command = [
-                'ffmpeg',
+                f'{ffmpeg_path}',
                 '-i', f"{RAW_FOLDER}{video_filename}",
                 '-i', f"{RAW_FOLDER}{audio_filename}",
                 '-loglevel', 'warning',
@@ -905,7 +913,7 @@ class ConfigDialog:
         
         # Center the dialog on the parent window
         window_width = 500
-        window_height = 350  # Increased height to accommodate new entry
+        window_height = 400  # Increased height to accommodate new entry
         screen_width = parent.winfo_x() + parent.winfo_width() // 2
         screen_height = parent.winfo_y() + parent.winfo_height() // 2
         x = screen_width - window_width // 2
@@ -954,9 +962,15 @@ class ConfigDialog:
         self.prod_upload_url.grid(row=6, column=1, sticky=tk.EW, pady=5, padx=5)
         self.prod_upload_url.insert(0, config.get('PATHS', 'PROD_SERVER_URL_UPLOAD', fallback=''))
         
+        # FFMPEG Path
+        ttk.Label(frame, text="FFMPEG Path:").grid(row=7, column=0, sticky=tk.W, pady=5)
+        self.ffmpeg_path = ttk.Entry(frame, width=50)
+        self.ffmpeg_path.grid(row=7, column=1, sticky=tk.EW, pady=5, padx=5)
+        self.ffmpeg_path.insert(0, config.get('PATHS', 'FFMPEG_PATH', fallback='ffmpeg'))
+        
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=7, column=0, columnspan=2, pady=10)
+        btn_frame.grid(row=8, column=0, columnspan=2, pady=10)
         ttk.Button(btn_frame, text="Save", command=self.save_config).grid(row=0, column=0, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.dialog.destroy).grid(row=0, column=1, padx=5)
         
@@ -981,6 +995,7 @@ class ConfigDialog:
             config.set('PATHS', 'PROD_SERVER_URL', self.prod_server_url.get())
             config.set('PATHS', 'SERVER_URL_UPLOAD', self.upload_url.get())
             config.set('PATHS', 'PROD_SERVER_URL_UPLOAD', self.prod_upload_url.get())
+            config.set('PATHS', 'FFMPEG_PATH', self.ffmpeg_path.get())
             
             # Save to file
             with open('config.ini', 'w') as configfile:
