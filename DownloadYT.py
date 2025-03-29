@@ -784,7 +784,7 @@ def download_database():
 def upload_database():
     """Upload the songs database to the server."""
     # Create a processing dialog
-    processing_dialog = ProcessingDialog(root, title="Uploading Database", message="Uploading database, please wait...")
+    processing_dialog = DialogProcessing(root, title="Uploading Database", message="Uploading database, please wait...")
 
     # Run the upload in a separate thread
     def upload_task():
@@ -815,8 +815,6 @@ def upload_database():
             insertLog(f"Error uploading database: {str(e)}")
             # messagebox.showerror("Upload Error", f"An unexpected error occurred: {str(e)}")
         finally:
-            # Close the processing dialog
-            # processing_dialog.close()
             processing_dialog.toggle_close_button(enable=True)
 
     threading.Thread(target=upload_task, daemon=True).start()
@@ -833,7 +831,7 @@ def edit_song_details():
     old_filepath = tree.item(item)['values'][3]
     
     # Show edit dialog
-    dialog = SongEditDialog(root, old_artist, old_title, old_filepath)
+    dialog = DialogSongEdit(root, old_artist, old_title, old_filepath)
     root.wait_window(dialog.dialog)
     
     # If user clicked Save and provided new details
@@ -919,7 +917,7 @@ def show_db_context_menu(event):
         db_context_menu.post(event.x_root, event.y_root)
 
 
-class ConfigDialog:
+class DialogConfig:
     def __init__(self, parent):
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Configuration")
@@ -1040,7 +1038,7 @@ class ConfigDialog:
 
 def open_config_dialog():
     """Open the configuration dialog."""
-    dialog = ConfigDialog(root)
+    dialog = DialogConfig(root)
     root.wait_window(dialog.dialog)
 
 def refresh_file_list():
@@ -1160,7 +1158,7 @@ def add_songs_to_db():
                     songs_to_add.append((artist, title, file, duration))
                 else:
                     # Show dialog if parsing fails
-                    dialog = ArtistTitleDialog(root, filename)
+                    dialog = DialogArtistTitle(root, filename)
                     root.wait_window(dialog.dialog)
                     
                     if dialog.result:
@@ -1173,7 +1171,7 @@ def add_songs_to_db():
                         insertLog(f"Skipped file: {filename}")
             else:
                 # Multiple hyphens or no hyphen, show dialog
-                dialog = ArtistTitleDialog(root, filename)
+                dialog = DialogArtistTitle(root, filename)
                 root.wait_window(dialog.dialog)
                 
                 if dialog.result:  # If user entered data and clicked Save
@@ -1246,7 +1244,7 @@ def preview_video():
         insertLog(error_msg)
         messagebox.showerror("Error", error_msg)
 
-class ArtistTitleDialog:
+class DialogArtistTitle:
     def __init__(self, parent, filename):
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Enter Artist and Title")
@@ -1453,7 +1451,7 @@ class Tooltip:
         tw.wm_geometry("+%d+%d" % (self.x, self.y))
         label = tk.Label(tw, text=self.text, justify=tk.LEFT,
                          background="#ffffe0", relief=tk.SOLID, borderwidth=1,
-                         font=("tahoma", "8", "normal"))
+                         font=("tahoma", "10", "normal"))
         label.pack(ipadx=4)
 
     def hide(self, event):
@@ -1643,7 +1641,7 @@ def rename_selected_file():
     old_filepath = os.path.join(folder_path, old_filename)
     
     # Show rename dialog
-    dialog = FileRenameDialog(root, old_filename)
+    dialog = DialogFileRename(root, old_filename)
     root.wait_window(dialog.dialog)
     
     # If user clicked Save and provided a new name
@@ -1751,7 +1749,7 @@ file_context_menu.add_command(label="Delete", command=delete_selected_file)
 file_tree.bind('<Button-3>', show_file_context_menu)  # For Windows/Linux
 file_tree.bind('<Button-2>', show_file_context_menu)  # For macOS
 
-class FileRenameDialog:
+class DialogFileRename:
     def __init__(self, parent, old_filename):
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Rename File")
@@ -1901,6 +1899,7 @@ frame_results.grid_columnconfigure(0, weight=1)
 
 # Create context menu for database management
 db_context_menu = tk.Menu(tree, tearoff=0)
+db_context_menu.add_command(label="Preview", command=lambda: preview_video(tree.item(tree.selection()[0])['values'][3] if tree.selection() else ""))
 db_context_menu.add_command(label="Edit", command=edit_song_details)
 db_context_menu.add_separator()
 db_context_menu.add_command(label="Delete", command=delete_song)
@@ -1937,7 +1936,100 @@ btn_download_db.grid(row=0, column=2, padx=5, pady=5)
 btn_upload_db = ttk.Button(frame_db_buttons, text="Upload DB", command=lambda: upload_database())
 btn_upload_db.grid(row=0, column=3, padx=5, pady=5)
 
-class SongEditDialog:
+# Add Verify button
+btn_verify = ttk.Button(frame_db_buttons, text="Verify", command=lambda: verify_filepaths())
+btn_verify.grid(row=0, column=4, padx=5, pady=5, sticky=tk.W)
+
+# Add "Null Entries" button
+btn_null_entries = ttk.Button(frame_db_buttons, text="Null Entries", command=lambda: find_null_entries())
+btn_null_entries.grid(row=0, column=5, padx=5, pady=5, sticky=tk.W)
+
+def find_null_entries():
+    """Query the database for songs with missing artist or title entries."""
+    try:
+        # Clear existing items in the treeview
+        for item in tree.get_children():
+            tree.delete(item)
+
+        # Connect to the database
+        db_path = get_db_path()
+        if not os.path.exists(db_path):
+            messagebox.showerror("Error", "Database file not found. Please download the database first.")
+            return
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Query for entries with NULL or empty artist or title
+        cursor.execute("""
+            SELECT songid, artist, title, path 
+            FROM dbsongs 
+            WHERE artist IS NULL OR artist = '' OR title IS NULL OR title = ''
+        """)
+
+        # Add results to the treeview
+        for row in cursor.fetchall():
+            tree.insert('', 'end', values=row)
+
+        conn.close()
+
+        # Show message if no results found
+        if not tree.get_children():
+            messagebox.showinfo("Search Results", "No songs with missing artist or title found.")
+        else:
+            messagebox.showinfo("Search Results", "Songs with missing artist or title have been listed.")
+
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Error querying database: {str(e)}")
+    except Exception as e:
+        messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+
+def verify_filepaths():
+    """Verify if the file paths for each row in the database exist."""
+    try:
+        # Connect to the database
+        db_path = get_db_path()
+        if not os.path.exists(db_path):
+            messagebox.showerror("Error", "Database file not found. Please download the database first.")
+            return
+
+        # Clear existing items in the treeview
+        for item in tree.get_children():
+            tree.delete(item)
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Fetch all rows from the database
+        cursor.execute("SELECT songid, artist, title, path FROM dbsongs")
+        rows = cursor.fetchall()
+
+        missing_files = []
+        for row in rows:
+            songid, artist, title, filepath = row
+            if not os.path.exists(filepath):
+                missing_files.append((songid, artist, title, filepath))
+
+        conn.close()
+
+        # Display results
+        if missing_files:
+            messagebox.showwarning(
+                "Missing Files",
+                f"{len(missing_files)} file(s) are missing. Check the logs for details."
+            )
+            for songid, artist, title, filepath in missing_files:
+                insertLog(f"Missing: {artist} - {title} [{filepath}]")
+                tree.insert('', 'end', values=(songid, artist, title, filepath))
+        else:
+            messagebox.showinfo("Verification Complete", "All file paths are valid.")
+
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Error verifying file paths: {str(e)}")
+    except Exception as e:
+        messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+
+class DialogSongEdit:
     def __init__(self, parent, old_artist, old_title, old_filepath):
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Edit Song Details")
@@ -2018,7 +2110,7 @@ class SongEditDialog:
         """Cancel the edit operation."""
         self.dialog.destroy()
 
-class VideoPreviewDialog:
+class DialogVideoPreview:
     def __init__(self, parent, video_path):
         # Initialize audio_loaded flag first
         self.audio_loaded = False
@@ -2246,29 +2338,32 @@ class VideoPreviewDialog:
         pygame.quit()
         self.dialog.destroy()
 
-def preview_video():
-    """Open video preview dialog for the selected file."""
-    if not file_tree.selection():
-        return
-        
-    item = file_tree.selection()[0]
-    filename = file_tree.item(item)['values'][0]
-    folder_path = txt_folder.get()
-    filepath = os.path.join(folder_path, filename)
+def preview_video(fname=""):
     
-    if not filename.lower().endswith(('.mp4', '.avi', '.mkv', '.mov')):
+    filepath = fname
+    if fname == "":    
+        """Open video preview dialog for the selected file."""
+        if not file_tree.selection():
+            return
+            
+        item = file_tree.selection()[0]
+        filename = file_tree.item(item)['values'][0]
+        folder_path = txt_folder.get()
+        filepath = os.path.join(folder_path, filename)
+    
+    if not filepath.lower().endswith(('.mp4', '.avi', '.mkv', '.mov')):
         messagebox.showwarning("Warning", "Selected file is not a video file.")
         return
     
     try:
-        dialog = VideoPreviewDialog(root, filepath)
+        dialog = DialogVideoPreview(root, filepath)
         root.wait_window(dialog.dialog)
     except Exception as e:
         error_msg = f"Error previewing video: {str(e)}"
         insertLog(error_msg)
         messagebox.showerror("Error", error_msg)
 
-class ProcessingDialog:
+class DialogProcessing:
     def __init__(self, parent, title="Processing", message="Please wait..."):
         """Initialize the processing dialog."""
         self.dialog = tk.Toplevel(parent)
@@ -2279,7 +2374,7 @@ class ProcessingDialog:
 
         # Center the dialog on the parent window
         window_width = 300
-        window_height = 110
+        window_height = 120
         screen_width = parent.winfo_screenwidth()
         screen_height = parent.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -2293,11 +2388,11 @@ class ProcessingDialog:
         # Add a spinner progress below the text
         self.spinner = ttk.Progressbar(self.dialog, mode='indeterminate', length=200)
         self.spinner.pack(pady=5)
-        self.spinner.start(5)  # Start the spinner animation with a faster interval (10ms)
+        self.spinner.start(20)  # Start the spinner animation with a faster interval (10ms)
 
         # Add a close button (disabled by default)
         self.close_button = ttk.Button(self.dialog, text="Close", command=self.close, state=tk.DISABLED)
-        self.close_button.pack(pady=10)
+        self.close_button.pack(pady=5)
 
     def update_message(self, new_message, playsound):
         """Update the displayed message."""
@@ -2321,7 +2416,7 @@ root.resizable(width=True, height=True)
 root.geometry("700x600")
 
 # Center the window on the screen
-window_width = 700
+window_width = 750
 window_height = 600
 screen_width = root.winfo_screenwidth()
 screen_height = root.winfo_screenheight()
