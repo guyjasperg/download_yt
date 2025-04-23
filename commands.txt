@@ -3,4 +3,4 @@
 pyinstaller --clean --noconfirm --onefile --windowed --add-data "config.ini:." --icon=Youtube-dl.icns DownloadYT.py
 pyinstaller --clean --noconfirm --onedir --windowed --add-data "config.ini:." --icon=Youtube-dl.icns DownloadYT.py
 
-pyinstaller --clean --noconfirm DownloadYT.spec   
+pyinstaller --clean --noconfirm DownloadYT.spec
