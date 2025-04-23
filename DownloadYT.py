@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
-from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 from tkinter import scrolledtext
 from tkinter import filedialog  # For folder selection dialog
 from tkinter import messagebox
 import cv2
-import vlc
 from PIL import Image, ImageTk
 import pygame  # For video/audio playback
 from pynput import keyboard
@@ -21,7 +19,6 @@ import json  # For parsing JSON
 import sys
 import time
 import configparser
-# import webview
 
 import requests
 import sqlite3
@@ -35,8 +32,6 @@ config.read(config_path)
 
 RAW_FOLDER = config.get('PATHS', 'RAW_FOLDER') #, fallback='DOWNLOADS/')
 MERGED_FOLDER = config.get('PATHS', 'MERGED_FOLDER') #, fallback='NEW_SONGS/')
-PARAM_WEB = config.getboolean('PATHS', 'PARAM_WEB', fallback=False)
-PARAM_PO_TOKEN = config.getboolean('PATHS', 'PARAM_PO_TOKEN', fallback=False)
 
 # print('RAW_FOLDER',RAW_FOLDER)
 # print('MERGED_FOLDER',MERGED_FOLDER)
@@ -249,20 +244,7 @@ def start_download_thread(bDownloadAll, url, tab_id):
             # yt = YouTube(url,'WEB', po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress )
             # yt = YouTube(url,use_po_token=True,po_token=PO_TOKEN, on_progress_callback=on_progress )
             # yt = YouTube(url, on_progress_callback=on_progress )
-            # yt = YouTube(url, po_token=PO_TOKEN, on_progress_callback=on_progress )
-            # yt = YouTube(url, 'WEB', on_progress_callback=on_progress )
-            
-            print(f'PARAM_WEB: {PARAM_WEB}, PARAM_PO_TOKEN: {PARAM_PO_TOKEN}')
-            
-            if PARAM_WEB and PARAM_PO_TOKEN:
-                yt = YouTube(url, 'WEB', po_token=PO_TOKEN, on_progress_callback=on_progress )
-            elif PARAM_WEB:
-                yt = YouTube(url, 'WEB', on_progress_callback=on_progress )
-            elif PARAM_PO_TOKEN:
-                yt = YouTube(url, po_token=PO_TOKEN, on_progress_callback=on_progress )
-            else:
-                yt = YouTube(url, on_progress_callback=on_progress )
-                
+            yt = YouTube(url, po_token=PO_TOKEN, on_progress_callback=on_progress )
         except Exception as e:
             message_queue.put(f"ERROR: An error occurred: {e}")
             if not bDownloadAll:
@@ -616,9 +598,6 @@ def check_and_run_chrome():
             if url_title_map:
                 populate_combobox()
 
-            #make sure Download button is enabled
-            download_button.config(state=tk.NORMAL)
-
         except Exception as e:
             message = str(e)
             if message.find('Failed to establish a new connection')>=0:
@@ -726,20 +705,6 @@ def get_upload_url():
         return config.get('PATHS', 'PROD_SERVER_URL_UPLOAD', fallback='')
     return config.get('PATHS', 'SERVER_URL_UPLOAD', fallback='')
 
-def get_param_WEB():
-    return config.getboolean('PATHS', 'PARAM_WEB', fallback=False)
-
-def get_param_PO_TOKEN():
-    return config.getboolean('PATHS', 'PARAM_PO_TOKEN', fallback=False)
-
-def get_config_settings():
-    global RAW_FOLDER, MERGED_FOLDER, PARAM_WEB, PARAM_PO_TOKEN
-    
-    RAW_FOLDER = config.get('PATHS', 'RAW_FOLDER') #, fallback='DOWNLOADS/')
-    MERGED_FOLDER = config.get('PATHS', 'MERGED_FOLDER') #, fallback='NEW_SONGS/')
-    PARAM_WEB = config.getboolean('PATHS', 'PARAM_WEB', fallback=False)
-    PARAM_PO_TOKEN = config.getboolean('PATHS', 'PARAM_PO_TOKEN', fallback=False)
-    
 def search_database():
     """Search the database based on the query in the search box."""
     query = txt_search.get().strip()
@@ -764,7 +729,7 @@ def search_database():
         # Search in both artist and title columns
         search_query = f"%{query}%"
         cursor.execute("""
-            SELECT songid, artist, title, path, starttime 
+            SELECT songid, artist, title, path 
             FROM dbsongs 
             WHERE artist LIKE ? OR title LIKE ?
             ORDER BY artist, title
@@ -864,15 +829,13 @@ def edit_song_details():
     old_artist = tree.item(item)['values'][1]
     old_title = tree.item(item)['values'][2]
     old_filepath = tree.item(item)['values'][3]
-    old_starttime = tree.item(item)['values'][4]
     
     # Show edit dialog
-    dialog = DialogSongEdit(root, old_artist, old_title, old_filepath, old_starttime)
+    dialog = DialogSongEdit(root, old_artist, old_title, old_filepath)
     root.wait_window(dialog.dialog)
     
     # If user clicked Save and provided new details
     if dialog.result:
-        print(f"New details: {dialog.result}")
         try:
             # Connect to database
             conn = sqlite3.connect(get_db_path())
@@ -881,9 +844,9 @@ def edit_song_details():
             # Update the database
             cursor.execute("""
                 UPDATE dbsongs 
-                SET artist = ?, title = ?, path = ?, starttime = ?
+                SET artist = ?, title = ?, path = ?
                 WHERE songid = ?
-            """, (dialog.result['artist'], dialog.result['title'], dialog.result['filepath'], dialog.result['start_time'], song_id))
+            """, (dialog.result['artist'], dialog.result['title'], dialog.result['filepath'], song_id))
             
             conn.commit()
             conn.close()
@@ -893,8 +856,7 @@ def edit_song_details():
                 song_id,
                 dialog.result['artist'],
                 dialog.result['title'],
-                dialog.result['filepath'],
-                dialog.result['start_time']
+                dialog.result['filepath']
             ))
             
             insertLog(f"Updated song details for ID {song_id}")
@@ -917,7 +879,6 @@ def delete_song():
     song_id = tree.item(item)['values'][0]
     artist = tree.item(item)['values'][1]
     title = tree.item(item)['values'][2]
-    filepath = tree.item(item)['values'][3]
     
     # Show confirmation dialog
     if not messagebox.askyesno("Confirm Delete", 
@@ -934,19 +895,10 @@ def delete_song():
         conn.commit()
         conn.close()
         
-        insertLog(f"Deleted song: {artist} - {title}")
-
         # Remove from treeview
         tree.delete(item)
         
-        # Delete the actual file from the filesystem
-        if os.path.exists(filepath):
-            try:
-                os.remove(filepath)
-            except Exception as e:
-                insertLog(f"Error deleting file: {str(e)}")
-                messagebox.showerror("Error", f"Error deleting file: {str(e)}")
-        insertLog(f"Deleted file: {filepath}")
+        insertLog(f"Deleted song: {artist} - {title}")
         
     except sqlite3.Error as e:
         error_msg = f"Database error: {str(e)}"
@@ -974,7 +926,7 @@ class DialogConfig:
         
         # Center the dialog on the parent window
         window_width = 500
-        window_height = 435  # Increased height to accommodate new entry
+        window_height = 400  # Increased height to accommodate new entry
         screen_width = parent.winfo_x() + parent.winfo_width() // 2
         screen_height = parent.winfo_y() + parent.winfo_height() // 2
         x = screen_width - window_width // 2
@@ -1029,30 +981,9 @@ class DialogConfig:
         self.ffmpeg_path.grid(row=7, column=1, sticky=tk.EW, pady=5, padx=5)
         self.ffmpeg_path.insert(0, config.get('PATHS', 'FFMPEG_PATH', fallback='ffmpeg'))
         
-        # Python3 Path
-        ttk.Label(frame, text="Python3 Path:").grid(row=8, column=0, sticky=tk.W, pady=5)
-        self.python3_path = ttk.Entry(frame, width=50)
-        self.python3_path.grid(row=8, column=1, sticky=tk.EW, pady=5, padx=5)
-        self.python3_path.insert(0, config.get('PATHS', 'PYTHON3_PATH', fallback='/usr/bin/python3'))
-        
-        # pyTube Params
-        ttk.Label(frame, text="pyTube Params:").grid(row=9, column=0, sticky=tk.W, pady=5)
-        self.param_web = tk.BooleanVar(value=config.getboolean('PATHS', 'param_web', fallback=False))
-        self.param_po_token = tk.BooleanVar(value=config.getboolean('PATHS', 'param_po_token', fallback=False))
-        
-        # frame for the check boxes
-        frame_pytube_params = ttk.Frame(frame)
-        frame_pytube_params.grid(row=9, column=1, columnspan=1, sticky=tk.EW, pady=5)
-
-        self.chk_web = ttk.Checkbutton(frame_pytube_params, text="WEB", variable=self.param_web)
-        self.chk_web.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
-
-        self.chk_po_token = ttk.Checkbutton(frame_pytube_params, text="PO Token", variable=self.param_po_token)
-        self.chk_po_token.grid(row=0, column=2, sticky=tk.W, pady=5, padx=5)
-
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=10, column=0, columnspan=3, pady=10)
+        btn_frame.grid(row=8, column=0, columnspan=2, pady=10)
         ttk.Button(btn_frame, text="Save", command=self.save_config).grid(row=0, column=0, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.dialog.destroy).grid(row=0, column=1, padx=5)
         
@@ -1078,18 +1009,14 @@ class DialogConfig:
             config.set('PATHS', 'SERVER_URL_UPLOAD', self.upload_url.get())
             config.set('PATHS', 'PROD_SERVER_URL_UPLOAD', self.prod_upload_url.get())
             config.set('PATHS', 'FFMPEG_PATH', self.ffmpeg_path.get())
-            config.set('PATHS', 'PYTHON3_PATH', self.python3_path.get())
-            config.set('PATHS', 'PARAM_WEB', str(self.param_web.get()))
-            config.set('PATHS', 'PARAM_PO_TOKEN', str(self.param_po_token.get()))
             
             # Save to file
             with open('config.ini', 'w') as configfile:
                 config.write(configfile)
                 
             # Update global variables
-            get_config_settings()
-            # RAW_FOLDER = self.raw_folder.get()
-            # MERGED_FOLDER = self.merged_folder.get()
+            RAW_FOLDER = self.raw_folder.get()
+            MERGED_FOLDER = self.merged_folder.get()
             
             # Create directories if they don't exist
             os.makedirs(RAW_FOLDER, exist_ok=True)
@@ -1309,8 +1236,7 @@ def preview_video():
         return
     
     try:
-        # open_file_with_default_app(filepath)
-        preview_video(filepath)
+        open_file_with_default_app(filepath)
         # dialog = VideoPreviewDialog(root, filepath)
         # root.wait_window(dialog.dialog)
     except Exception as e:
@@ -1561,8 +1487,7 @@ for i, text in enumerate(["This is the first tab", "This is the second tab", "Th
 # Add YouTube Downloader tab contents
 frame_poToken = ttk.Frame(tab_downloader)
 frame_poToken.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=10)
-tab_downloader.grid_columnconfigure(0, weight=0)
-tab_downloader.grid_columnconfigure(1, weight=0)
+tab_downloader.grid_columnconfigure(1, weight=1)
 
 # add visitor, poToken
 lbl_visitor = ttk.Label(frame_poToken, text="visitor")
@@ -1570,18 +1495,17 @@ lbl_visitor.grid(row=0,column=0, sticky=tk.W)
 
 txt_visitor = ttk.Entry(frame_poToken, width=55)
 txt_visitor.insert(tk.END, VISITOR_DATA)
-txt_visitor.grid(row=0,column=1, columnspan=4)
+txt_visitor.grid(row=0,column=1, columnspan=3)
 
 lbl_poToken = ttk.Label(frame_poToken, text="poToken")
 lbl_poToken.grid(row=1,column=0, sticky=tk.W)
 
 txt_poToken = ttk.Entry(frame_poToken, width=55)
 txt_poToken.insert(tk.END,PO_TOKEN)
-txt_poToken.grid(row=1,column=1, columnspan=4)
+txt_poToken.grid(row=1,column=1, columnspan=3)
 
 frame = ttk.Frame(tab_downloader)
-frame.grid(row=1, column=0, padx=5, pady=5, sticky=tk.NSEW)
-# frame.configure(background="white")
+frame.grid(row=1, column=0, padx=5, pady=10, sticky=tk.NSEW)
 
 tab_downloader.grid_rowconfigure(1, weight=1)
 tab_downloader.grid_columnconfigure(0, weight=1)
@@ -1601,7 +1525,6 @@ btnRefreshTabs.grid(row=0, column=2, padx=2, pady=5)
 download_button = ttk.Button(frame, text="Download", command=start_download)
 download_button.grid(row=0, column=3, padx=2, pady=5)
 
-frame.grid_rowconfigure(0, weight=1)
 frame.grid_rowconfigure(1, weight=1)
 frame.grid_columnconfigure(1, weight=1)
 
@@ -1946,8 +1869,7 @@ frame_results.grid(row=1, column=0, padx=5, pady=5, sticky=tk.NSEW)
 tab_db_management.grid_rowconfigure(1, weight=1)
 
 # Add Treeview for results
-# Update the columns tuple to include StartTime
-columns = ("ID", "Artist", "Title", "Filepath", "StartTime")
+columns = ("ID", "Artist", "Title", "Filepath")
 tree = ttk.Treeview(frame_results, columns=columns, show='headings')
 
 # Define column headings
@@ -1955,14 +1877,12 @@ tree.heading('ID', text='ID')
 tree.heading('Artist', text='Artist')
 tree.heading('Title', text='Title')
 tree.heading('Filepath', text='Filepath')
-tree.heading('StartTime', text='StartTime')
 
 # Configure column widths
 tree.column('ID', width=0, stretch=False, minwidth=0)  # Hide ID column
 tree.column('Artist', width=200)
 tree.column('Title', width=300)
-tree.column('Filepath', width=300)
-tree.column('StartTime', width=0, stretch=False, minwidth=0)  # Hide StartTime column
+tree.column('Filepath', width=300)  # Increased width for better visibility
 
 # Add scrollbars
 vsb = ttk.Scrollbar(frame_results, orient="vertical", command=tree.yview)
@@ -1997,7 +1917,7 @@ frame_db_buttons.grid(row=2, column=0, padx=5, pady=5, sticky=tk.EW)
 
 # Add buttons with equal spacing
 frame_db_buttons.grid_columnconfigure(0, weight=0)  # Changed from 1 to 0 to keep checkbox left-aligned
-frame_db_buttons.grid_columnconfigure(5, weight=0)  # Right spacing
+frame_db_buttons.grid_columnconfigure(4, weight=1)  # Right spacing
 
 # Add production checkbox
 production_var = tk.BooleanVar()
@@ -2022,7 +1942,7 @@ btn_verify.grid(row=0, column=4, padx=5, pady=5, sticky=tk.W)
 
 # Add "Null Entries" button
 btn_null_entries = ttk.Button(frame_db_buttons, text="Null Entries", command=lambda: find_null_entries())
-btn_null_entries.grid(row=0, column=5, padx=5, pady=5, sticky=tk.E)
+btn_null_entries.grid(row=0, column=5, padx=5, pady=5, sticky=tk.W)
 
 def find_null_entries():
     """Query the database for songs with missing artist or title entries."""
@@ -2110,7 +2030,7 @@ def verify_filepaths():
         messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
 
 class DialogSongEdit:
-    def __init__(self, parent, old_artist, old_title, old_filepath, old_starttime):
+    def __init__(self, parent, old_artist, old_title, old_filepath):
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Edit Song Details")
         self.dialog.transient(parent)  # Make dialog modal
@@ -2147,15 +2067,9 @@ class DialogSongEdit:
         # Scroll to the end of filepath to show filename
         self.entry_filepath.xview_moveto(1)
         
-        # Add Start Time field
-        ttk.Label(frame, text="Start Time:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        self.entry_start_time = ttk.Entry(frame, width=50)
-        self.entry_start_time.grid(row=3, column=1, sticky=tk.EW, pady=5, padx=5)
-        self.entry_start_time.insert(0, old_starttime)  # Default value
-        
-        # Buttons (update row number from 3 to 4)
+        # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=4, column=0, columnspan=2, pady=10)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=10)
         ttk.Button(btn_frame, text="Fix Case", command=self.fix_case).grid(row=0, column=0, padx=5)
         ttk.Button(btn_frame, text="Save", command=self.save).grid(row=0, column=1, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.cancel).grid(row=0, column=2, padx=5)
@@ -2188,8 +2102,7 @@ class DialogSongEdit:
         self.result = {
             'artist': self.entry_artist.get(),
             'title': self.entry_title.get(),
-            'filepath': self.entry_filepath.get(),
-            'start_time': self.entry_start_time.get()
+            'filepath': self.entry_filepath.get()
         }
         self.dialog.destroy()
         
@@ -2425,7 +2338,6 @@ class DialogVideoPreview:
         pygame.quit()
         self.dialog.destroy()
 
-
 def preview_video(fname=""):
     
     filepath = fname
@@ -2443,57 +2355,9 @@ def preview_video(fname=""):
         messagebox.showwarning("Warning", "Selected file is not a video file.")
         return
     
-    if not os.path.exists(filepath):
-        messagebox.showerror("Error", f"File not found: {filepath}")
-        return
-    
     try:
-        # dialog = DialogVideoPreview(root, filepath)
-        
-        # Determine preview script path
-        if getattr(sys, 'frozen', False):
-            # Running as PyInstaller bundle (extract path)
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(__file__)        
-        
-        # preview_bin = os.path.join(base_path, 'preview_player')
-        preview_bin = os.path.join(base_path, 'preview_player', 'preview_player')
-
-        preview_player_path = os.path.join(base_path, 'preview_player.py')
-        
-        # Use system python to run preview_player.py
-        python_path = shutil.which("python3") or shutil.which("python")
-
-        if python_path is None:
-            messagebox.showerror("Error", "Python interpreter not found.")
-            return        
-        
-        # preview_player_path = os.path.join(os.path.dirname(__file__), 'preview_player.py')
-        # python3_path = config.get('PATHS', 'PYTHON3_PATH', fallback='python3') 
-
-        # if python_path == '':
-        #     insertLog("PYTHON3_PATH not set in config.ini")
-        #     python_path = 'python3'
-            
-        # subprocess.Popen([sys.executable, preview_player_path, filepath])
-        process = subprocess.Popen([python_path, preview_player_path, filepath], 
-                          stdout=subprocess.PIPE, 
-                          stderr=subprocess.PIPE)
-        
-        # Assume preview_player is next to the .app bundle
-        # main_app_dir = Path(sys.executable).parent.parent.parent  # Mac .app path: Contents/MacOS/...
-        # preview_bin = main_app_dir / "preview_player" / "preview_player"
-
-        
-        # process = subprocess.Popen([str(preview_bin), filepath], 
-        #                   stdout=subprocess.PIPE, 
-        #                   stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-
-        insertLog(f"Output: {stdout.decode()}")
-        insertLog(f"Error: {stderr.decode()}")
-        
+        dialog = DialogVideoPreview(root, filepath)
+        root.wait_window(dialog.dialog)
     except Exception as e:
         error_msg = f"Error previewing video: {str(e)}"
         insertLog(error_msg)

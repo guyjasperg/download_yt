@@ -1,22 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-datas = [
-    ('preview_player.py', '.'),  # equivalent to --add-data="preview_player.py:."
-    ('config.ini', '.'), 
-    ('Sounds/*', 'Sounds')
-]
-
-binaries=[('/Applications/VLC.app/Contents/MacOS/lib/libvlc.5.dylib','.'), 
-    ('/Applications/VLC.app/Contents/MacOS/lib/libvlccore.9.dylib', '.')]
-
-hiddenimports = ['vlc', 'PyQt5.QtWidgets']
 
 a = Analysis(
     ['DownloadYT.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=[],
+    datas=[('config.ini', '.'),('Sounds/*', 'Sounds')],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -44,7 +34,6 @@ exe = EXE(
     entitlements_file=None,
     icon=['Youtube-dl.icns'],
 )
-
 coll = COLLECT(
     exe,
     a.binaries,
@@ -54,7 +43,6 @@ coll = COLLECT(
     upx_exclude=[],
     name='DownloadYT',
 )
-
 app = BUNDLE(
     coll,
     name='DownloadYT.app',

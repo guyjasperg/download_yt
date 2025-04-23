@@ -157,7 +157,7 @@ def remove_keywords(filename, keywords=None):
     keywordtoremove = keywords_to_remove if keywords == [] else keywords
 
     # clean invalid characters first
-    invalid_chars = ['(', ')', '[', ']','{','}', '*', '_', '|', '/','+', '🎤', '🎵','♫','♪','🎶','🎙️','✴']
+    invalid_chars = ['(', ')', '[', ']','{','}', '*', '_', '|', '/','+', '🎤', '🎵','♫','♪']
     for char in invalid_chars:
         new_name = new_name.replace(char, ' ')
     
