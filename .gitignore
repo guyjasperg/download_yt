@@ -2,11 +2,11 @@
 /chrome_profile
 /build
 /dist
+/Archive
 /DOWNLOADS
 /NEW_SONGS
 /__pycache__
 /final_dist
 mydatabase.sqlite
 mydatabase.sqlite.backup
-
 /.venv

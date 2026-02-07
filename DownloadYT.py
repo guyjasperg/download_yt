@@ -344,15 +344,16 @@ def start_download_thread(bDownloadAll, url, tab_id):
 
             command = [
                 f'{ffmpeg_path}',
-                '-i', f"{RAW_FOLDER}{video_filename}",
-                '-i', f"{RAW_FOLDER}{audio_filename}",
+                '-i', f'{RAW_FOLDER}{video_filename}',
+                '-i', f'{RAW_FOLDER}{audio_filename}',
                 '-loglevel', 'warning',
                 '-preset', 'ultrafast',  # Use ultrafast preset for faster encoding
                 '-c:v', 'copy',  # Copy video codec (no re-encoding)
                 '-c:a', 'aac',   # Use AAC codec for audio
                 '-strict', 'experimental',  # To ensure ffmpeg accepts the audio format
-                output_file
+                f'{output_file}'
             ]
+            message_queue.put(f"Running ffmpeg command: {' '.join(command)}")
             subprocess.run(command, check=True)                
 
             # If successful, delete the original video and audio files (optional)
@@ -669,17 +670,27 @@ def launch_chrome_with_debugging(port=9222):
     if not chrome_executable:
         raise Exception("Chrome executable not found. Please specify the path.")
 
+    # Use absolute path for user data directory
+    import tempfile
+    user_data_dir = os.path.join(tempfile.gettempdir(), f'chrome_debug_profile_{port}')
+    
+    # Create directory if it doesn't exist
+    os.makedirs(user_data_dir, exist_ok=True)
+
     try:
         subprocess.Popen([
             chrome_executable,
-            "--remote-debugging-port=" + str(port),
-            "--user-data-dir=./chrome_profile", # Use a specific profile to avoid conflicts
-            "--no-first-run", # prevent first run screen
-            "--disable-extensions", # prevent extensions from interfering
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            "--disable-blink-features=AutomationControlled",
+            "--new-window",  # Open in new window
         ])
 
         # Give Chrome a little time to start
-        time.sleep(2)  # Adjust if needed
+        time.sleep(3)  # Adjust if needed
 
         return True
 
@@ -1488,7 +1499,7 @@ root.title("YouTube Video Downloader")
 # root.bind('<Option-3>', lambda e: activate_tab(2))
 
 style = ttk.Style(root) #initialize style
-style.theme_use('aqua')
+style.theme_use('vista')
 
 # Set background color for all ttk widgets
 bg_color = "#F0F0F0"  # Light gray background that matches ttk default
